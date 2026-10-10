@@ -69,6 +69,15 @@ def write_run_manifest(config: dict[str, Any], output: str | Path) -> None:
                 "question count limited for smoke execution"
                 if config["data"].get("max_questions_per_sample", 8) < 8
                 else "",
+                "warmup disabled for short overfit diagnostic"
+                if config["training"].get("warmup_steps") == 0
+                else "",
+                "curriculum starts at a later paper stage so K>1 routing is observable"
+                if config["training"].get("initial_curriculum_step", 0) > 0
+                else "",
+                "periodic validation is enabled for the short diagnostic"
+                if config["training"].get("validation_every_steps")
+                else "",
             ]
         )
     output.parent.mkdir(parents=True, exist_ok=True)

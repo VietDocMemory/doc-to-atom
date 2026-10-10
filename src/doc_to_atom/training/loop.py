@@ -68,6 +68,65 @@ def _answer_text(answer) -> str:
     return str(answer or "")
 
 
+def _decode(tokenizer, token_ids: list[int]) -> str:
+    if hasattr(tokenizer, "decode"):
+        return tokenizer.decode(token_ids, skip_special_tokens=True)
+    return " ".join(map(str, token_ids))
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _aggregate_traces(traces: list[dict]) -> dict:
+    if not traces:
+        return {"count": 0}
+    loss_names = traces[0]["losses"]
+    metric_names = (
+        "total_loss",
+        "gold_recall_at_1",
+        "gold_recall_at_k",
+        "mrr",
+        "routing_entropy",
+        "adapter_norm",
+        "token_accuracy",
+    )
+    return {
+        "count": len(traces),
+        "losses": {
+            name: _mean([trace["losses"][name] for trace in traces]) for name in loss_names
+        },
+        **{
+            name: _mean(
+                [float(trace[name]) for trace in traces if trace.get(name) is not None]
+            )
+            for name in metric_names
+        },
+        "examples": [
+            {
+                "question_id": trace["question_id"],
+                "selected_atom_ids": trace["selected_atom_ids"],
+                "routing_weights": trace["routing_weights"],
+                "prediction": trace["prediction"],
+                "target": trace["target"],
+            }
+            for trace in traces
+        ],
+    }
+
+
+def _split_trace_report(traces: list[dict]) -> dict:
+    return {
+        "overall": _aggregate_traces(traces),
+        "answerable": _aggregate_traces(
+            [trace for trace in traces if trace["group"] == "answerable"]
+        ),
+        "generated_irrelevant": _aggregate_traces(
+            [trace for trace in traces if trace["group"] == "generated_irrelevant"]
+        ),
+    }
+
+
 def _memory(system, tokenizer, record: StructuredRecord, config: dict) -> MemoryBank:
     device = _model_device(system.base_model)
     atom_inputs = _tokenize(
@@ -168,11 +227,40 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         ),
     }
     bundle = MultiObjectiveTrainer(config).combine(step, losses)
+    candidate_scores = (
+        student.router.stage1_scores
+        + config["router"]["rerank_fusion_weight"] * student.router.reranker_scores
+        + student.router.metadata_biases
+    )
+    ranked_indices = student.router.stage1_indices[torch.argsort(candidate_scores, descending=True)]
+    gold_indices = torch.where(gold_mask)[0]
+    diagnostic_k = min(config.get("evaluation", {}).get("routing_recall_k", 4), len(all_ids))
+    recall_at_1 = recall_at_k = mrr = None
+    if gold_indices.numel():
+        gold_set = set(gold_indices.tolist())
+        ranked = ranked_indices.tolist()
+        recall_at_1 = len(gold_set.intersection(ranked[:1])) / len(gold_set)
+        recall_at_k = len(gold_set.intersection(ranked[:diagnostic_k])) / len(gold_set)
+        first_rank = next((rank for rank, index in enumerate(ranked, 1) if index in gold_set), None)
+        mrr = 0.0 if first_rank is None else 1.0 / first_rank
+    weights = student.router.routing_weights.detach().float()
+    predicted_ids = student_answer.detach().argmax(dim=-1)[0]
     trace = {
+        "question_id": qa.question_id,
+        "group": "generated_irrelevant" if qa.is_generated_irrelevant else "answerable",
+        "total_loss": float(bundle.total.detach()),
         "losses": {name: float(value.detach()) for name, value in losses.items()},
         "selected_atom_ids": [atom.atom_id for atom in selected_atoms],
         "routing_weights": [float(value) for value in student.router.routing_weights.detach()],
         "routing_weight_sum": float(student.router.routing_weights.detach().sum()),
+        "routing_entropy": float(-(weights * weights.clamp_min(1e-12).log()).sum()),
+        "gold_recall_at_1": recall_at_1,
+        "gold_recall_at_k": recall_at_k,
+        "mrr": mrr,
+        "adapter_norm": float(student.composed.adapter_norm().detach()),
+        "token_accuracy": float((predicted_ids == answer_ids).float().mean()),
+        "prediction": _decode(tokenizer, predicted_ids.tolist()),
+        "target": answer,
         "stage1_candidate_count": int(student.router.stage1_indices.numel()),
         "final_top_k": int(student.router.selected_indices.numel()),
     }
@@ -196,7 +284,11 @@ def run_training(
         betas=tuple(config["training"]["betas"]),
         weight_decay=config["training"]["weight_decay"],
     )
-    total_steps = max(1, len(train_records) * config["training"]["max_epochs"])
+    total_steps = max(
+        1,
+        config["training"].get("max_steps")
+        or len(train_records) * config["training"]["max_epochs"],
+    )
     scheduler = get_cosine_schedule_with_warmup(
         optimizer, config["training"]["warmup_steps"], total_steps
     )
@@ -205,6 +297,7 @@ def run_training(
     best_validation = float("inf")
     bad_epochs = 0
     last_trace = None
+    last_validation_report = None
     log_path = output_dir / "train_log.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
     optimizer.zero_grad(set_to_none=True)
@@ -216,12 +309,15 @@ def run_training(
             bank = _memory(system, tokenizer, record, config)
             record_totals = []
             record_lm = []
+            record_traces = []
             for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
+                curriculum_step = config["training"].get("initial_curriculum_step", 0) + global_step
                 bundle, lm_value, trace = _one_question(
-                    system, tokenizer, record, qa, bank, config, global_step
+                    system, tokenizer, record, qa, bank, config, curriculum_step
                 )
                 record_totals.append(bundle.total)
                 record_lm.append(lm_value)
+                record_traces.append(trace)
                 last_trace = trace
             if not record_totals:
                 continue
@@ -232,19 +328,34 @@ def run_training(
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
+            global_step += 1
+            validation_every = config["training"].get("validation_every_steps")
+            if validation_records and validation_every and global_step % validation_every == 0:
+                curriculum_step = (
+                    config["training"].get("initial_curriculum_step", 0) + global_step
+                )
+                last_validation_report = _validation_report(
+                    system, tokenizer, validation_records, config, curriculum_step
+                )
+                system.train()
+                system.base_model.eval()
             with log_path.open("a", encoding="utf-8") as handle:
                 handle.write(
                     json.dumps(
                         {
                             "epoch": epoch,
                             "step": global_step,
-                            "lm": sum(record_lm) / len(record_lm),
-                            "total": float(record_total.detach()),
+                            "curriculum_step": config["training"].get(
+                                "initial_curriculum_step", 0
+                            )
+                            + global_step
+                            - 1,
+                            "train": _split_trace_report(record_traces),
+                            "validation": last_validation_report,
                         }
                     )
                     + "\n"
                 )
-            global_step += 1
             max_steps = config["training"].get("max_steps")
             if max_steps is not None and global_step >= max_steps:
                 break
@@ -255,7 +366,15 @@ def run_training(
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
 
-        validation_lm = _validation_lm(system, tokenizer, validation_records, config, global_step)
+        curriculum_step = config["training"].get("initial_curriculum_step", 0) + global_step
+        if last_validation_report is None or not config["training"].get(
+            "validation_every_steps"
+        ):
+            last_validation_report = _validation_report(
+                system, tokenizer, validation_records, config, curriculum_step
+            )
+        validation_lm = last_validation_report["overall"].get("losses", {}).get("lm")
+        validation_lm = float("nan") if validation_lm is None else validation_lm
         save_checkpoint(
             {
                 "encoder_projection": system.encoder.projection,
@@ -295,6 +414,7 @@ def run_training(
         "steps": global_step,
         "best_validation_lm": best_validation,
         "last_trace": last_trace,
+        "last_validation": last_validation_report,
         "elapsed_seconds": time.perf_counter() - started,
         "cuda_available": torch.cuda.is_available(),
         "cuda_peak_allocated_bytes": (
@@ -307,14 +427,16 @@ def run_training(
 
 
 @torch.no_grad()
-def _validation_lm(system, tokenizer, records, config, step):
+def _validation_report(system, tokenizer, records, config, step):
     if not records:
-        return float("nan")
+        return _split_trace_report([])
     system.eval()
-    values = []
+    traces = []
     for record in records:
         bank = _memory(system, tokenizer, record, config)
         for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
-            _bundle, lm, _trace = _one_question(system, tokenizer, record, qa, bank, config, step)
-            values.append(lm)
-    return sum(values) / len(values)
+            _bundle, _lm, trace = _one_question(
+                system, tokenizer, record, qa, bank, config, step
+            )
+            traces.append(trace)
+    return _split_trace_report(traces)

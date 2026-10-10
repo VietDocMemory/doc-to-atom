@@ -22,8 +22,15 @@ LOGGER = logging.getLogger(__name__)
 
 def build_system(config: dict, enable_reranker: bool = True):
     model_cfg = config["model"]
+    runtime = config.get("runtime", {})
+    requested_device = runtime.get("device", "auto")
+    device = torch.device(
+        "cuda" if requested_device == "auto" and torch.cuda.is_available() else "cpu"
+        if requested_device == "auto"
+        else requested_device
+    )
     dtype = torch.bfloat16
-    kwargs = {"torch_dtype": dtype}
+    kwargs = {"dtype": dtype}
     if model_cfg.get("flash_attention_2") is True:
         kwargs["attn_implementation"] = "flash_attention_2"
     try:
@@ -39,6 +46,11 @@ def build_system(config: dict, enable_reranker: bool = True):
             raise
     tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"])
     freeze_base_model(model)
+    if runtime.get("gradient_checkpointing"):
+        LOGGER.warning(
+            "gradient checkpointing disabled: dynamic adapter hooks are scoped to the forward "
+            "context and would be absent during checkpoint recomputation"
+        )
     targets = discover_target_shapes(
         model, model_cfg["memory_layer_indices"], model_cfg["target_modules"]
     )
@@ -67,7 +79,9 @@ def build_system(config: dict, enable_reranker: bool = True):
     )
     reranker = (
         FrozenBGEReranker(
-            config["router"]["reranker_name"], config["router"]["reranker_max_length"]
+            config["router"]["reranker_name"],
+            config["router"]["reranker_max_length"],
+            device=runtime.get("reranker_device", str(device)),
         )
         if enable_reranker
         else None
@@ -83,6 +97,12 @@ def build_system(config: dict, enable_reranker: bool = True):
         model, targets, compiler_cfg["lora_rank"], compiler_cfg["lora_alpha"]
     )
     system = TeacherStudentSystem(model, encoder, compiler, router, composer, injector)
+    system.to(device)
+    LOGGER.info(
+        "runtime device=%s, reranker device=%s",
+        device,
+        runtime.get("reranker_device", device),
+    )
     return system, tokenizer, targets
 
 

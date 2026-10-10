@@ -4,6 +4,8 @@ _base_: gemma_paper.yaml
 runtime:
   profile: resource_constrained
   single_gpu: true
+  device: auto
+  reranker_device: cpu
   gradient_checkpointing: true
   flash_attention_2: auto
   log_reproduction_deviations: true

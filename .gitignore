@@ -6,7 +6,7 @@ __pycache__/
 .env
 outputs/*
 !outputs/.gitkeep
-# data/
+data/*
 checkpoints/
 wandb/
 

@@ -1,0 +1,13 @@
+# REPRODUCTION DEVIATION: diagnostic overfit schedule, based on the resource profile.
+_base_: resource_constrained.yaml
+training:
+  max_epochs: 1
+  max_steps: 5
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+  validation_every_steps: 1
+  initial_curriculum_step: 2000  # Use paper Stage 2 (K=4) so routing entropy is observable.
+data:
+  max_questions_per_sample: 2
+evaluation:
+  routing_recall_k: 4

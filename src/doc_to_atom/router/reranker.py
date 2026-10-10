@@ -4,10 +4,15 @@ import torch
 
 
 class FrozenBGEReranker:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-base", max_length: int = 192):
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-reranker-base",
+        max_length: int = 192,
+        device: str | None = None,
+    ):
         from sentence_transformers import CrossEncoder
 
-        self.model = CrossEncoder(model_name, max_length=max_length)
+        self.model = CrossEncoder(model_name, max_length=max_length, device=device)
         for parameter in self.model.model.parameters():
             parameter.requires_grad_(False)
         self.model.model.eval()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
@@ -37,6 +38,7 @@ class OpenAIConfig:
     temperature: float = 0.0
     max_tokens: int = 8192
     irrelevant_probe_count: int = 2
+    decomposition_retries: int = 1  # REPRODUCTION_DEVIATION: provider robustness retry.
 
     @classmethod
     def from_env(cls) -> OpenAIConfig:
@@ -66,6 +68,11 @@ class ThreeStageXMLAtomizer:
         self.resolved_model = response.model
         return response.choices[0].message.content or ""
 
+    @staticmethod
+    def _span_is_verbatim(span: str, context: str) -> bool:
+        normalize = lambda value: re.sub(r"\s+", " ", value).strip()
+        return normalize(span) in normalize(context)
+
     def atomize(
         self,
         record_id: str,
@@ -80,6 +87,23 @@ class ThreeStageXMLAtomizer:
         try:
             xml = self._call(DECOMPOSITION_SYSTEM, f"{adapter}\n<document>{context}</document>")
             atoms, warnings = parse_atoms_xml(xml)
+            invalid_spans = [
+                atom.source_span
+                for atom in atoms
+                if not self._span_is_verbatim(atom.source_span, context)
+            ]
+            if invalid_spans and getattr(self.config, "decomposition_retries", 0):
+                repair = (
+                    "\nYour previous response used non-verbatim source_span values. Regenerate the "
+                    "complete atom XML. For each fact that joins non-contiguous clauses, either copy "
+                    "the entire contiguous source sentence or split it into separate atoms. Never use "
+                    "ellipsis. Invalid previous spans:\n- " + "\n- ".join(invalid_spans)
+                )
+                xml = self._call(
+                    DECOMPOSITION_SYSTEM + repair,
+                    f"{adapter}\n<document>{context}</document>",
+                )
+                atoms, warnings = parse_atoms_xml(xml)
             meta.warnings.extend(warnings)
             if not atoms:
                 meta.errors.append("context decomposition returned no valid atoms")

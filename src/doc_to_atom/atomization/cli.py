@@ -9,7 +9,7 @@ from pathlib import Path
 from doc_to_atom.config import load_project_env
 
 from .client import MiniMaxAtomizer, MiniMaxConfig, OpenAIAtomizer, OpenAIConfig
-from .models import QuestionAnnotation
+from .models import QuestionAnnotation, StructuredRecord
 
 LOGGER = logging.getLogger(__name__)
 
@@ -19,6 +19,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Offline three-stage XML semantic atomization")
     parser.add_argument("--input", required=True, help="JSONL with id, context, questions")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Append missing records and reuse existing cached record IDs",
+    )
+    parser.add_argument(
+        "--retry-invalid",
+        action="store_true",
+        help="With --resume, discard cached records containing invalid spans and re-atomize them",
+    )
     parser.add_argument(
         "--provider",
         choices=["minimax", "openai"],
@@ -32,13 +42,33 @@ def main() -> None:
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    cached_ids: set[str] = set()
+    retained_lines: list[str] = []
+    if args.resume and output.exists():
+        with output.open(encoding="utf-8") as cached:
+            for line in cached:
+                if not line.strip():
+                    continue
+                record = StructuredRecord.model_validate_json(line)
+                if args.retry_invalid and any(not atom.span_valid for atom in record.atoms):
+                    continue
+                cached_ids.add(record.record_id)
+                retained_lines.append(line.rstrip("\n"))
+        if args.retry_invalid:
+            with output.open("w", encoding="utf-8", newline="\n") as rewritten:
+                for line in retained_lines:
+                    rewritten.write(line + "\n")
     failed = 0
+    mode = "a" if args.resume else "w"
     with (
         Path(args.input).open(encoding="utf-8") as source,
-        output.open("w", encoding="utf-8") as sink,
+        output.open(mode, encoding="utf-8") as sink,
     ):
         for index, line in enumerate(source):
             raw = json.loads(line)
+            record_id = str(raw.get("id", index))
+            if record_id in cached_ids:
+                continue
             questions = [
                 QuestionAnnotation(
                     question_id=str(item.get("id", f"q_{q_index}")),
@@ -49,7 +79,7 @@ def main() -> None:
                 for q_index, item in enumerate(raw.get("questions", []))
             ]
             record = atomizer.atomize(
-                str(raw.get("id", index)),
+                record_id,
                 raw["context"],
                 questions,
                 raw.get("dataset"),

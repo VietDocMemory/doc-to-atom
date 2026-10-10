@@ -39,3 +39,7 @@ exact commit in `PAPER_SPEC.md`; this reproduction should be re-audited when the
 
 `gemma_paper.yaml`, `qwen_paper.yaml`, the data schemas, compiler tensor shapes, routing stages, composition equation, injection targets, losses, and curriculum preserve disclosed behavior. Any runnable value absent from the paper is isolated in a separate config and emitted in the run manifest.
 
+The small real-data overfit diagnostic and its prompt comparison are documented in
+`SMALL_OVERFIT_REPORT.md`. Its Stage-2 start, zero warmup, duplicated examples, OpenAI retry,
+GPU/CPU placement, and SDPA fallback are diagnostics or runtime deviations, not paper settings.
+

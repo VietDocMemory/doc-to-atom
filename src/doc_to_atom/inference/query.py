@@ -30,22 +30,35 @@ class QueryEngine:
     def answer(
         self, query: str, bank: MemoryBank, top_k: int = 8, max_new_tokens: int = 128
     ) -> dict:
-        encoded = self.tokenizer(query, return_tensors="pt").to(
+        query_encoded = self.tokenizer(query, return_tensors="pt").to(
             next(self.model.parameters()).device
         )
-        query_embedding = self.encoder.encode_queries(**encoded)
+        generation_prompt = f"Question: {query}\nAnswer:"
+        generation_inputs = self.tokenizer(generation_prompt, return_tensors="pt").to(
+            next(self.model.parameters()).device
+        )
+        query_embedding = self.encoder.encode_queries(**query_encoded)
         routed = self.router(query_embedding, bank.keys, bank.atoms or [], query, top_k)
         composed = self.composer(bank, routed.selected_indices, routed.routing_weights)
+        candidate_scores = (
+            routed.stage1_scores
+            + self.router.rerank_fusion_weight * routed.reranker_scores
+            + routed.metadata_biases
+        )
+        ranked_indices = routed.stage1_indices[torch.argsort(candidate_scores, descending=True)]
         with self.injector.activate(composed):
-            output = self.model.generate(**encoded, do_sample=False, max_new_tokens=max_new_tokens)
+            output = self.model.generate(
+                **generation_inputs, do_sample=False, max_new_tokens=max_new_tokens
+            )
         prediction = self.tokenizer.decode(
-            output[0, encoded["input_ids"].shape[1] :], skip_special_tokens=True
+            output[0, generation_inputs["input_ids"].shape[1] :], skip_special_tokens=True
         )
         return {
             "prediction": prediction,
             "selected_atom_ids": [
                 (bank.atoms or [])[i].atom_id for i in routed.selected_indices.tolist()
             ],
+            "ranked_atom_ids": [(bank.atoms or [])[i].atom_id for i in ranked_indices.tolist()],
             "stage1_scores": routed.stage1_scores.tolist(),
             "reranker_scores": routed.reranker_scores.tolist(),
             "metadata_biases": routed.metadata_biases.tolist(),

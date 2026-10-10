@@ -11,6 +11,26 @@ class Baseline(Protocol):
 
 
 @dataclass
+class BaseQueryOnly:
+    model: object
+    tokenizer: object
+    max_new_tokens: int = 128
+    name: str = "base_query_only"
+
+    def answer(self, document: str, question: str) -> str:
+        prompt = f"Question: {question}\nAnswer:"
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(
+            next(self.model.parameters()).device
+        )
+        output = self.model.generate(
+            **inputs, do_sample=False, max_new_tokens=self.max_new_tokens
+        )
+        return self.tokenizer.decode(
+            output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        )
+
+
+@dataclass
 class BaseWithContext:
     model: object
     tokenizer: object
