@@ -1,0 +1,30 @@
+# REPRODUCTION DEVIATION: runnable single-GPU/Molab smoke configuration.
+# Assumed coefficients are deliberately isolated from gemma_paper.yaml.
+_base_: gemma_paper.yaml
+runtime:
+  profile: resource_constrained
+  single_gpu: true
+  gradient_checkpointing: true
+  flash_attention_2: auto
+  log_reproduction_deviations: true
+training:
+  effective_global_batch: 8
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_epochs: 1
+  early_stopping_patience: 2
+  sparse_target_density: 0.25  # ASSUMPTION; paper does not publish rho.
+  irrelevant_stage3_multiplier: 2.0  # ASSUMPTION; paper only says "increase".
+  sparse_stage4_multiplier: 2.0  # ASSUMPTION; paper only says "strengthen".
+  loss_weights:  # ASSUMPTION; paper does not publish coefficients.
+    lm: 1.0
+    distill: 1.0
+    route: 1.0
+    rerank: 1.0
+    irrelevant: 0.1
+    protect: 0.001
+    sparse: 0.01
+    composition: 0.1
+    conflict: 0.1
+    confidence: 0.1
+

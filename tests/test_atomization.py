@@ -1,0 +1,57 @@
+from doc_to_atom.atomization.models import (
+    AnnotationMeta,
+    Atom,
+    QuestionAnnotation,
+    StructuredRecord,
+)
+from doc_to_atom.atomization.parser import parse_atoms_xml, parse_questions_xml
+from doc_to_atom.atomization.validation import validate_record
+
+
+def test_atom_xml_parser_recovers_partial_response():
+    xml = """<atoms><atom id="atom_0"><semantic_type>fact_claim</semantic_type>
+    <content>Paris is in France.</content><source_span>Paris is in France.</source_span>
+    <retrieval_text>Paris country</retrieval_text><is_answer_bearing>true</is_answer_bearing>
+    <abstraction_level>evidence</abstraction_level><confidence>0.9</confidence>
+    <relations><relation type="supports" target="atom_1"/></relations></atom><atom"""
+    atoms, warnings = parse_atoms_xml(xml)
+    assert len(atoms) == 1
+    assert atoms[0].semantic_type == "fact_claim"
+    assert not warnings
+
+
+def test_question_xml_parser():
+    xml = """<root><question_annotation id="q0"><question>Where?</question>
+    <question_type>single_hop</question_type><gold_atom_ids><atom_id>atom_0</atom_id></gold_atom_ids>
+    <supporting_atom_ids></supporting_atom_ids><distractor_atom_ids>atom_1</distractor_atom_ids>
+    <is_irrelevant>false</is_irrelevant><has_conflict>false</has_conflict>
+    <is_generated_irrelevant>false</is_generated_irrelevant></question_annotation></root>"""
+    questions, warnings = parse_questions_xml(xml)
+    assert questions[0].gold_atom_ids == ["atom_0"]
+    assert questions[0].distractor_atom_ids == ["atom_1"]
+    assert not warnings
+
+
+def test_span_and_question_cross_validation():
+    atoms = [
+        Atom(atom_id="atom_0", semantic_type="fact_claim", content="A", source_span="exact span", retrieval_text="A", is_answer_bearing=True, abstraction_level="evidence", conflict_group="c", confidence=1),
+        Atom(atom_id="atom_1", semantic_type="fact_claim", content="B", source_span="fabricated", retrieval_text="B", is_answer_bearing=True, abstraction_level="evidence", conflict_group="c", confidence=1),
+    ]
+    qa = QuestionAnnotation(question_id="q0", question="?", question_type="single_hop", gold_atom_ids=["atom_0", "missing"], supporting_atom_ids=["atom_0"], relevant_atom_ids=["wrong"], is_irrelevant=False)
+    record = StructuredRecord(record_id="r", context="An exact   span is here.", atoms=atoms, qa_pairs=[qa], annotation_meta=AnnotationMeta())
+    validate_record(record)
+    assert record.atoms[0].span_valid
+    assert not record.atoms[1].span_valid
+    assert record.qa_pairs[0].gold_atom_ids == ["atom_0"]
+    assert record.qa_pairs[0].relevant_atom_ids == ["atom_0"]
+    assert record.qa_pairs[0].has_conflict
+    assert record.annotation_meta.warnings
+
+
+def test_irrelevant_clears_gold():
+    atom = Atom(atom_id="atom_0", semantic_type="fact_claim", content="A", source_span="A", retrieval_text="A", is_answer_bearing=True, abstraction_level="evidence", confidence=1)
+    qa = QuestionAnnotation(question_id="q", question="?", question_type="single_hop", gold_atom_ids=["atom_0"], is_irrelevant=True)
+    record = validate_record(StructuredRecord(record_id="r", context="A", atoms=[atom], qa_pairs=[qa]))
+    assert record.qa_pairs[0].gold_atom_ids == []
+    assert record.qa_pairs[0].question_type == "irrelevant"
+

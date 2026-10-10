@@ -1,0 +1,21 @@
+# Paper-to-code implementation map
+
+| Paper component | Implementation |
+|---|---|
+| Appendix B atom schemas, relations and QA types | `atomization/models.py` |
+| MiniMax three-pass annotation and recovery policy | `atomization/client.py`, `parser.py`, `validation.py` |
+| Shared frozen first-four-layer encoder and mean pool | `encoder/shared.py` |
+| Projection and compiler heads | `compiler/model.py`, `compiler/memory.py` |
+| Stage-1 cosine retrieval, metadata and frozen BGE reranking | `router/model.py`, `router/reranker.py` |
+| Equation (1), sparse gates and optional MicroKV interface | `composer/model.py` |
+| Last-four-layer q/v/o/down micro-LoRA hooks | `injection/lora.py` |
+| Teacher/student execution | `training/system.py` |
+| Curriculum, ten objectives and optimization loop | `training/curriculum.py`, `losses/objectives.py`, `training/loop.py` |
+| Offline memory-bank build and online query | `inference/build_memory.py`, `inference/query.py` |
+| Metrics, required baselines and trace logging | `evaluation/` |
+| Checkpoint save/resume | `training/checkpoint.py` |
+
+MicroKV is represented at the compiler/composer interface, but training with it
+is rejected explicitly because the paper does not publish its shape, injection
+site, or whether it is part of the primary model. This prevents a silent
+invention from being reported as a reproduction.

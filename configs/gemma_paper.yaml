@@ -1,0 +1,73 @@
+# Paper-faithful values from arXiv:2606.12400v1. Null means PAPER_UNSPECIFIED.
+model:
+  name: google/gemma-2-2b-it
+  family: gemma2
+  hidden_size: 2304
+  decoder_layers: 26
+  encoder_layers: 4
+  memory_layer_indices: [22, 23, 24, 25]
+  target_modules: [q_proj, v_proj, o_proj, down_proj]
+  dtype: bfloat16
+  flash_attention_2: true
+  frozen: true
+encoder:
+  output_dim: 256
+  pooling: attended_mean
+compiler:
+  latent_dim: 256
+  key_dim: 256
+  lora_rank: 8
+  lora_alpha: 16.0
+  lora_dropout: 0.0
+  lora_a_std: 0.02
+  lora_b_zero: true
+  sparse_mask: true
+  micro_kv:
+    enabled: false
+    slots: null  # PAPER_UNSPECIFIED
+    head_dim: null  # PAPER_UNSPECIFIED
+router:
+  stage1_top_k: 32
+  reranker_name: BAAI/bge-reranker-base
+  reranker_max_length: 192
+  rerank_fusion_weight: 1.0
+  metadata_bias: true
+  temperature: 1.0
+training:
+  optimizer: AdamW
+  learning_rate: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+  scheduler: cosine
+  warmup_steps: 500
+  gradient_clip: 1.0
+  effective_global_batch: 128
+  max_epochs: 50
+  early_stopping_patience: null  # PAPER_UNSPECIFIED
+  distillation_temperature: 1.5
+  route_weights:
+    negative: 0.5
+    gold: 1.0
+    distractor: 1.5
+  sparse_target_density: null  # PAPER_UNSPECIFIED (rho)
+  loss_weights:
+    lm: null  # PAPER_UNSPECIFIED
+    distill: null  # PAPER_UNSPECIFIED
+    route: null  # PAPER_UNSPECIFIED
+    rerank: null  # PAPER_UNSPECIFIED
+    irrelevant: null  # PAPER_UNSPECIFIED
+    protect: null  # PAPER_UNSPECIFIED
+    sparse: null  # PAPER_UNSPECIFIED
+    composition: null  # PAPER_UNSPECIFIED
+    conflict: null  # PAPER_UNSPECIFIED
+    confidence: null  # PAPER_UNSPECIFIED
+data:
+  max_context_tokens: 8192
+  max_atom_tokens: 96
+  max_answer_tokens: 128
+  max_atoms_per_sample: 64
+  max_questions_per_sample: 8
+evaluation:
+  decoding: greedy
+  max_new_tokens: 128
+
