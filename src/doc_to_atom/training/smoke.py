@@ -32,7 +32,13 @@ from doc_to_atom.training.trainer import MultiObjectiveTrainer
 
 
 def _atoms() -> list[Atom]:
-    types = ["fact_claim", "entity_attribute", "event_relation", "process_step", "evidence_fragment"]
+    types = [
+        "fact_claim",
+        "entity_attribute",
+        "event_relation",
+        "process_step",
+        "evidence_fragment",
+    ]
     return [
         Atom(
             atom_id=f"atom_{i}",
@@ -122,4 +128,3 @@ def main() -> None:
     config = load_config(args.config)
     write_run_manifest(config, Path(args.output_dir) / "run_manifest.json")
     print(json.dumps(run_smoke(config, Path(args.output_dir)), indent=2))
-

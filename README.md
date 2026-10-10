@@ -25,7 +25,21 @@ uv run scripts/evaluate.py --predictions outputs/predictions.jsonl
 uv run pytest
 ```
 
-MiniMax uses an OpenAI-compatible endpoint configured through `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, and optional `MINIMAX_MODEL` (default `MiniMax-M2.5`). Prompts are reconstructed, not official.
+OpenAI deviation example:
+
+```bash
+uv run scripts/atomize.py --provider openai \
+  --input data/squad_small_raw.jsonl \
+  --output data/squad_small_atoms_openai.jsonl
+uv run scripts/train.py --config configs/resource_constrained.yaml \
+  --data data/squad_small_atoms_openai.jsonl --max-steps 1 --max-questions 1
+```
+
+Credentials are loaded from the ignored `.env`. MiniMax uses `MINIMAX_API_KEY`,
+`MINIMAX_BASE_URL`, and optional `MINIMAX_MODEL`. The supported OpenAI deviation uses
+`OPENAI_API_KEY` and optional `OPENAI_ANNOTATION_MODEL` (default `gpt-4.1-mini`) with
+`--provider openai`. Prompts are reconstructed, not official; OpenAI output is tagged
+`REPRODUCTION_DEVIATION` in annotation provenance.
 
 See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
 

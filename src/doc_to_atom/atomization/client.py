@@ -30,10 +30,31 @@ class MiniMaxConfig:
         )
 
 
-class MiniMaxAtomizer:
-    def __init__(self, config: MiniMaxConfig):
+@dataclass
+class OpenAIConfig:
+    api_key: str
+    model: str = "gpt-4.1-mini"
+    temperature: float = 0.0
+    max_tokens: int = 8192
+    irrelevant_probe_count: int = 2
+
+    @classmethod
+    def from_env(cls) -> OpenAIConfig:
+        return cls(
+            api_key=os.environ["OPENAI_API_KEY"],
+            model=os.getenv("OPENAI_ANNOTATION_MODEL", "gpt-4.1-mini"),
+        )
+
+
+class ThreeStageXMLAtomizer:
+    def __init__(
+        self, config: MiniMaxConfig | OpenAIConfig, provider: str, base_url: str | None = None
+    ):
         self.config = config
-        self.client = OpenAI(api_key=config.api_key, base_url=config.base_url)
+        self.provider = provider
+        self.resolved_model = config.model
+        self.last_errors: list[str] = []
+        self.client = OpenAI(api_key=config.api_key, base_url=base_url)
 
     def _call(self, system: str, user: str) -> str:
         response = self.client.chat.completions.create(
@@ -42,6 +63,7 @@ class MiniMaxAtomizer:
             max_tokens=self.config.max_tokens,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
+        self.resolved_model = response.model
         return response.choices[0].message.content or ""
 
     def atomize(
@@ -53,6 +75,7 @@ class MiniMaxAtomizer:
         split: str | None = None,
     ) -> StructuredRecord | None:
         meta = AnnotationMeta()
+        self.last_errors = []
         adapter = DATASET_ADAPTERS.get((dataset or "").lower(), "")
         try:
             xml = self._call(DECOMPOSITION_SYSTEM, f"{adapter}\n<document>{context}</document>")
@@ -60,10 +83,12 @@ class MiniMaxAtomizer:
             meta.warnings.extend(warnings)
             if not atoms:
                 meta.errors.append("context decomposition returned no valid atoms")
+                self.last_errors = list(meta.errors)
                 return None  # Appendix B: discard the whole sample.
         except Exception as exc:  # noqa: BLE001 -- Appendix B requires per-record recovery.
             meta.decomposition_parse_status = "failed"
             meta.errors.append(str(exc))
+            self.last_errors = list(meta.errors)
             return None
 
         augmented = list(questions)
@@ -117,5 +142,21 @@ class MiniMaxAtomizer:
             qa_pairs=annotated,
             annotation_meta=meta,
         )
+        if self.provider == "openai":
+            record.annotation_meta.prompt_provenance = (
+                "RECONSTRUCTED_PROMPT_NOT_OFFICIAL; REPRODUCTION_DEVIATION: "
+                f"OpenAI replaces MiniMax-M2.5; model={self.resolved_model}"
+            )
         return validate_record(record)
 
+
+class MiniMaxAtomizer(ThreeStageXMLAtomizer):
+    def __init__(self, config: MiniMaxConfig):
+        super().__init__(config, provider="minimax", base_url=config.base_url)
+
+
+class OpenAIAtomizer(ThreeStageXMLAtomizer):
+    """REPRODUCTION_DEVIATION: OpenAI replaces the paper's MiniMax-M2.5 annotator."""
+
+    def __init__(self, config: OpenAIConfig):
+        super().__init__(config, provider="openai")

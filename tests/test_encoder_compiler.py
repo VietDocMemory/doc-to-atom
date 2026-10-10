@@ -28,7 +28,9 @@ def test_compiler_shapes_key_norm_and_zero_b():
 
 def test_targets_are_only_last_four_layers():
     model = ToyLM(depth=6)
-    targets = discover_target_shapes(model, [2, 3, 4, 5], ["q_proj", "v_proj", "o_proj", "down_proj"])
+    targets = discover_target_shapes(
+        model, [2, 3, 4, 5], ["q_proj", "v_proj", "o_proj", "down_proj"]
+    )
     assert len(targets) == 16
     assert {target.layer_index for target in targets} == {2, 3, 4, 5}
 
@@ -37,4 +39,3 @@ def test_freeze_base_has_no_gradients():
     model = ToyLM()
     freeze_base_model(model)
     assert not any(parameter.requires_grad for parameter in model.parameters())
-

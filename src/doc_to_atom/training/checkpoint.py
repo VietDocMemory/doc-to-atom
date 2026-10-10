@@ -33,4 +33,3 @@ def load_checkpoint(
     if optimizer is not None and payload["optimizer"] is not None:
         optimizer.load_state_dict(payload["optimizer"])
     return int(payload["step"])
-

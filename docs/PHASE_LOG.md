@@ -3,11 +3,12 @@
 1. **Paper audit and isolated repository — complete.** Added `PAPER_SPEC.md`,
    `REPRODUCTION_NOTES.md`, configurations, packaging, and an independent Git
    root. The upstream repository had no code to port.
-2. **Atomization — implementation complete; live semantic run blocked.** Added
-   schemas, reconstructed prompts, MiniMax client, tolerant parsing, deterministic
-   cross-field validation, and CLI. Prompt literals and decoding values are
-   marked assumptions. The environment has neither `MINIMAX_API_KEY` nor
-   `MINIMAX_BASE_URL`, so no fabricated replacement was used.
+2. **Atomization — complete on the real subset with a declared deviation.** Added
+   schemas, reconstructed prompts, MiniMax/OpenAI providers, tolerant parsing,
+   deterministic cross-field validation, and CLI. OpenAI
+   `gpt-4.1-mini-2025-04-14` replaced MiniMax-M2.5 and is recorded in every
+   record's provenance. Output: 3 documents, 28 atoms, 18 questions, zero invalid
+   spans. Nineteen deterministic abstraction-level repairs remain as warnings.
 3. **Compiler — complete.** Added shared early-exit encoder, normalized key,
    rank-8 factors, zero-B initialization, sparse logits, and memory bank. Direct
    parallel factor heads are an explicit assumption because head factorization is
@@ -25,11 +26,11 @@
    separation, baselines, metrics, and per-example traces.
 8. **Synthetic smoke and unit tests — complete.** The smoke performs forward,
    all losses, backward, optimizer step, and checkpoint round-trip.
-9. **Real-data subset — partially complete.** Downloaded and grouped a small
-   SQuAD subset into `data/squad_small_raw.jsonl` (3 documents from 8 train and 4
-   validation rows). Atomization is blocked only on the missing MiniMax endpoint
-   credentials.
+9. **Real-data subset — smoke complete.** Grouped a small SQuAD subset, atomized
+   it to `data/squad_small_atoms_openai.jsonl`, validated it, manually checked QA
+   mappings, loaded gated Gemma with `HF_TOKEN`, and completed one real optimizer
+   step plus validation and checkpoint under `outputs/real_data_smoke/`.
 10. **Full reproduction run — intentionally not started.** The paper-scale run
-    requires gated Gemma access, MiniMax credentials, unpublished coefficients,
-    and the disclosed 8 x A100 80GB profile. The repository fails fast rather
-    than claiming equivalence under guessed settings.
+    still requires the disclosed 8 x A100 80GB profile and unpublished
+    coefficients. The completed run is a resource-constrained smoke, not a paper
+    metric reproduction.

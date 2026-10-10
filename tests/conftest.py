@@ -51,4 +51,3 @@ class ToyLM(nn.Module):
         for layer in self.model.layers:
             hidden = layer(hidden)
         return SimpleNamespace(logits=self.lm_head(hidden))
-

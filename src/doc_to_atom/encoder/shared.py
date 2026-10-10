@@ -53,7 +53,9 @@ class SharedAtomQueryEncoder(nn.Module):
     def _early_hidden(self, **model_inputs: torch.Tensor) -> torch.Tensor:
         layers = decoder_layers(self.base_model)
         if self.num_layers < 1 or self.num_layers > len(layers):
-            raise ValueError(f"encoder layer count {self.num_layers} outside model depth {len(layers)}")
+            raise ValueError(
+                f"encoder layer count {self.num_layers} outside model depth {len(layers)}"
+            )
         captured: list[torch.Tensor] = []
 
         def stop_after_layer(_module: nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:
@@ -89,4 +91,3 @@ class SharedAtomQueryEncoder(nn.Module):
 
     encode_atoms = forward
     encode_queries = forward
-

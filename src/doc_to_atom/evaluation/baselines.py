@@ -19,9 +19,13 @@ class BaseWithContext:
 
     def answer(self, document: str, question: str) -> str:
         prompt = f"Document:\n{document}\n\nQuestion: {question}\nAnswer:"
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(next(self.model.parameters()).device)
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(
+            next(self.model.parameters()).device
+        )
         output = self.model.generate(**inputs, do_sample=False, max_new_tokens=self.max_new_tokens)
-        return self.tokenizer.decode(output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+        return self.tokenizer.decode(
+            output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        )
 
 
 @dataclass
@@ -43,8 +47,12 @@ class DocToLoRABaseline:
         self.d2l_model.reset()
         self.d2l_model.internalize(document)
         inputs = self.tokenizer(question, return_tensors="pt").to(self.d2l_model.device)
-        output = self.d2l_model.generate(**inputs, do_sample=False, max_new_tokens=self.max_new_tokens)
-        return self.tokenizer.decode(output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+        output = self.d2l_model.generate(
+            **inputs, do_sample=False, max_new_tokens=self.max_new_tokens
+        )
+        return self.tokenizer.decode(
+            output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        )
 
 
 @dataclass
@@ -55,4 +63,3 @@ class Doc2AtomBaseline:
 
     def answer(self, document: str, question: str) -> str:
         return self.engine.answer(question, self.bank)["prediction"]
-

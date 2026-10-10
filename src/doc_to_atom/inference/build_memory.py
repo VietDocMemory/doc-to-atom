@@ -28,7 +28,10 @@ def save_memory_bank(bank: MemoryBank, path: str | Path) -> None:
         "mask_logits": bank.mask_logits.detach().cpu(),
         "micro_kv": None
         if bank.micro_kv is None
-        else {"keys": bank.micro_kv.keys.detach().cpu(), "values": bank.micro_kv.values.detach().cpu()},
+        else {
+            "keys": bank.micro_kv.keys.detach().cpu(),
+            "values": bank.micro_kv.values.detach().cpu(),
+        },
         "atoms": [atom.model_dump() for atom in bank.atoms or []],
     }
     path = Path(path)
@@ -47,4 +50,3 @@ def load_memory_bank(path: str | Path, device: str | torch.device = "cpu") -> Me
         micro_kv=None if micro_kv is None else MicroKV(**micro_kv),
         atoms=[Atom.model_validate(atom) for atom in payload["atoms"]],
     )
-

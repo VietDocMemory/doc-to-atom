@@ -27,6 +27,12 @@ def _text(element: ET.Element, name: str, default: str = "") -> str:
     return default if node is None or node.text is None else node.text.strip()
 
 
+def _value(element: ET.Element, name: str, default: str = "") -> str:
+    """Read equivalent XML attribute or child-element scalar forms."""
+    child = _text(element, name)
+    return child if child else (element.get(name) or default).strip()
+
+
 def _bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y"}
 
@@ -34,7 +40,7 @@ def _bool(value: str) -> bool:
 def _ids(element: ET.Element, name: str) -> list[str]:
     node = element.find(name)
     if node is None:
-        return []
+        return [item.strip() for item in element.get(name, "").split(",") if item.strip()]
     explicit = [child.text.strip() for child in node.findall("atom_id") if child.text]
     if explicit:
         return explicit
@@ -46,6 +52,24 @@ def parse_atoms_xml(xml: str) -> tuple[list[Atom], list[str]]:
     warnings: list[str] = []
     for index, node in enumerate(_recover_elements(xml, "atom")):
         try:
+            abstraction_level = _value(node, "abstraction_level")
+            aliases = {
+                "basic",
+                "detailed",
+                "fact_claim",
+                "entity_attribute",
+                "event_relation",
+                "process_step",
+                "evidence_fragment",
+            }
+            if (
+                abstraction_level not in {"abstract", "evidence", "hybrid"}
+                and abstraction_level in aliases
+            ):
+                warnings.append(
+                    f"atom[{index}] normalized abstraction_level={abstraction_level!r} to 'evidence'"
+                )
+                abstraction_level = "evidence"
             relations = []
             relation_root = node.find("relations")
             if relation_root is not None:
@@ -64,7 +88,7 @@ def parse_atoms_xml(xml: str) -> tuple[list[Atom], list[str]]:
                     source_span=_text(node, "source_span"),
                     retrieval_text=_text(node, "retrieval_text"),
                     is_answer_bearing=_bool(_text(node, "is_answer_bearing")),
-                    abstraction_level=_text(node, "abstraction_level"),
+                    abstraction_level=abstraction_level,
                     conflict_group=_text(node, "conflict_group") or None,
                     confidence=float(_text(node, "confidence", "0")),
                     relations=relations,
@@ -80,23 +104,21 @@ def parse_questions_xml(xml: str) -> tuple[list[QuestionAnnotation], list[str]]:
     warnings: list[str] = []
     for index, node in enumerate(_recover_elements(xml, "question_annotation")):
         try:
-            answer = _text(node, "answer") or None
             questions.append(
                 QuestionAnnotation(
-                    question_id=node.get("id") or _text(node, "question_id") or f"q_{index}",
-                    question=_text(node, "question"),
-                    answer=answer,
-                    question_type=_text(node, "question_type"),
+                    question_id=(node.get("id") or _value(node, "question_id") or f"q_{index}"),
+                    question=_value(node, "question"),
+                    answer=_value(node, "answer") or None,
+                    question_type=_value(node, "question_type"),
                     gold_atom_ids=_ids(node, "gold_atom_ids"),
                     supporting_atom_ids=_ids(node, "supporting_atom_ids"),
                     distractor_atom_ids=_ids(node, "distractor_atom_ids"),
                     relevant_atom_ids=_ids(node, "relevant_atom_ids"),
-                    is_irrelevant=_bool(_text(node, "is_irrelevant")),
-                    has_conflict=_bool(_text(node, "has_conflict")),
-                    is_generated_irrelevant=_bool(_text(node, "is_generated_irrelevant")),
+                    is_irrelevant=_bool(_value(node, "is_irrelevant")),
+                    has_conflict=_bool(_value(node, "has_conflict")),
+                    is_generated_irrelevant=_bool(_value(node, "is_generated_irrelevant")),
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- malformed generated elements are isolated.
             warnings.append(f"question[{index}] dropped: {exc}")
     return questions, warnings
-

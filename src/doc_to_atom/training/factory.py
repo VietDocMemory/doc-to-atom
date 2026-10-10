@@ -30,7 +30,9 @@ def build_system(config: dict, enable_reranker: bool = True):
         model = AutoModelForCausalLM.from_pretrained(model_cfg["name"], **kwargs)
     except (ImportError, ValueError) as exc:
         if config.get("runtime", {}).get("flash_attention_2") == "auto":
-            LOGGER.warning("REPRODUCTION DEVIATION: FlashAttention-2 unavailable; using SDPA: %s", exc)
+            LOGGER.warning(
+                "REPRODUCTION DEVIATION: FlashAttention-2 unavailable; using SDPA: %s", exc
+            )
             kwargs["attn_implementation"] = "sdpa"
             model = AutoModelForCausalLM.from_pretrained(model_cfg["name"], **kwargs)
         else:
@@ -64,7 +66,9 @@ def build_system(config: dict, enable_reranker: bool = True):
         micro_kv_head_dim=micro_kv["head_dim"] if micro_kv["enabled"] else None,
     )
     reranker = (
-        FrozenBGEReranker(config["router"]["reranker_name"], config["router"]["reranker_max_length"])
+        FrozenBGEReranker(
+            config["router"]["reranker_name"], config["router"]["reranker_max_length"]
+        )
         if enable_reranker
         else None
     )
@@ -84,7 +88,10 @@ def build_system(config: dict, enable_reranker: bool = True):
 
 def parameter_counts(module: torch.nn.Module) -> dict[str, int]:
     return {
-        "frozen": sum(parameter.numel() for parameter in module.parameters() if not parameter.requires_grad),
-        "trainable": sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad),
+        "frozen": sum(
+            parameter.numel() for parameter in module.parameters() if not parameter.requires_grad
+        ),
+        "trainable": sum(
+            parameter.numel() for parameter in module.parameters() if parameter.requires_grad
+        ),
     }
-

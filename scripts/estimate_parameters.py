@@ -13,7 +13,9 @@ def estimate_gemma() -> dict:
     projection = 2 * hidden + linear(hidden, latent) + linear(latent, latent)
     trunk = 2 * latent + linear(latent, latent) + linear(latent, latent)
     key_head = 2 * latent + linear(latent, latent)
-    factor_outputs = layers * sum(rank * (input_dim + output_dim) for input_dim, output_dim in shapes)
+    factor_outputs = layers * sum(
+        rank * (input_dim + output_dim) for input_dim, output_dim in shapes
+    )
     factor_heads = linear(latent, factor_outputs)
     mask_head = linear(latent, layers * len(shapes))
     router = 2 * latent + linear(latent, latent) + 4 + 5
@@ -34,4 +36,3 @@ def estimate_gemma() -> dict:
 
 if __name__ == "__main__":
     print(json.dumps(estimate_gemma(), indent=2))
-

@@ -32,13 +32,66 @@ def test_question_xml_parser():
     assert not warnings
 
 
+def test_openai_attribute_xml_and_abstraction_repair():
+    atom_xml = """<atoms><atom><atom_id>a1</atom_id><semantic_type>fact_claim</semantic_type>
+    <content>A fact.</content><source_span>A fact.</source_span><retrieval_text>A fact.</retrieval_text>
+    <is_answer_bearing>true</is_answer_bearing><abstraction_level>fact_claim</abstraction_level>
+    <confidence>0.9</confidence><relations/></atom></atoms>"""
+    atoms, atom_warnings = parse_atoms_xml(atom_xml)
+    assert atoms[0].abstraction_level == "evidence"
+    assert "normalized abstraction_level" in atom_warnings[0]
+
+    question_xml = """<question_annotations><question_annotation question_id="q1"
+    question="What?" answer="A fact" question_type="single_hop" gold_atom_ids="a1"
+    is_irrelevant="false" has_conflict="false" is_generated_irrelevant="false"/>
+    </question_annotations>"""
+    questions, warnings = parse_questions_xml(question_xml)
+    assert not warnings
+    assert questions[0].question_id == "q1"
+    assert questions[0].gold_atom_ids == ["a1"]
+
+
 def test_span_and_question_cross_validation():
     atoms = [
-        Atom(atom_id="atom_0", semantic_type="fact_claim", content="A", source_span="exact span", retrieval_text="A", is_answer_bearing=True, abstraction_level="evidence", conflict_group="c", confidence=1),
-        Atom(atom_id="atom_1", semantic_type="fact_claim", content="B", source_span="fabricated", retrieval_text="B", is_answer_bearing=True, abstraction_level="evidence", conflict_group="c", confidence=1),
+        Atom(
+            atom_id="atom_0",
+            semantic_type="fact_claim",
+            content="A",
+            source_span="exact span",
+            retrieval_text="A",
+            is_answer_bearing=True,
+            abstraction_level="evidence",
+            conflict_group="c",
+            confidence=1,
+        ),
+        Atom(
+            atom_id="atom_1",
+            semantic_type="fact_claim",
+            content="B",
+            source_span="fabricated",
+            retrieval_text="B",
+            is_answer_bearing=True,
+            abstraction_level="evidence",
+            conflict_group="c",
+            confidence=1,
+        ),
     ]
-    qa = QuestionAnnotation(question_id="q0", question="?", question_type="single_hop", gold_atom_ids=["atom_0", "missing"], supporting_atom_ids=["atom_0"], relevant_atom_ids=["wrong"], is_irrelevant=False)
-    record = StructuredRecord(record_id="r", context="An exact   span is here.", atoms=atoms, qa_pairs=[qa], annotation_meta=AnnotationMeta())
+    qa = QuestionAnnotation(
+        question_id="q0",
+        question="?",
+        question_type="single_hop",
+        gold_atom_ids=["atom_0", "missing"],
+        supporting_atom_ids=["atom_0"],
+        relevant_atom_ids=["wrong"],
+        is_irrelevant=False,
+    )
+    record = StructuredRecord(
+        record_id="r",
+        context="An exact   span is here.",
+        atoms=atoms,
+        qa_pairs=[qa],
+        annotation_meta=AnnotationMeta(),
+    )
     validate_record(record)
     assert record.atoms[0].span_valid
     assert not record.atoms[1].span_valid
@@ -49,9 +102,25 @@ def test_span_and_question_cross_validation():
 
 
 def test_irrelevant_clears_gold():
-    atom = Atom(atom_id="atom_0", semantic_type="fact_claim", content="A", source_span="A", retrieval_text="A", is_answer_bearing=True, abstraction_level="evidence", confidence=1)
-    qa = QuestionAnnotation(question_id="q", question="?", question_type="single_hop", gold_atom_ids=["atom_0"], is_irrelevant=True)
-    record = validate_record(StructuredRecord(record_id="r", context="A", atoms=[atom], qa_pairs=[qa]))
+    atom = Atom(
+        atom_id="atom_0",
+        semantic_type="fact_claim",
+        content="A",
+        source_span="A",
+        retrieval_text="A",
+        is_answer_bearing=True,
+        abstraction_level="evidence",
+        confidence=1,
+    )
+    qa = QuestionAnnotation(
+        question_id="q",
+        question="?",
+        question_type="single_hop",
+        gold_atom_ids=["atom_0"],
+        is_irrelevant=True,
+    )
+    record = validate_record(
+        StructuredRecord(record_id="r", context="A", atoms=[atom], qa_pairs=[qa])
+    )
     assert record.qa_pairs[0].gold_atom_ids == []
     assert record.qa_pairs[0].question_type == "irrelevant"
-

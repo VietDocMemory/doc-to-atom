@@ -77,7 +77,9 @@ def all_objectives(
 ) -> dict[str, torch.Tensor]:
     return {
         "lm": language_modeling_loss(student_logits, labels),
-        "distill": distillation_loss(student_logits, teacher_logits, answer_mask, distillation_temperature),
+        "distill": distillation_loss(
+            student_logits, teacher_logits, answer_mask, distillation_temperature
+        ),
         "route": routing_loss(route_scores, gold_mask, distractor_mask),
         "rerank": listwise_rerank_loss(reranker_scores, gold_mask),
         "irrelevant": irrelevant_suppression_loss(composed),
@@ -87,4 +89,3 @@ def all_objectives(
         "conflict": conflict_listwise_loss(route_scores, group_ids, gold_mask),
         "confidence": confidence_alignment_loss(routing_weights, selected_confidences),
     }
-

@@ -8,12 +8,30 @@ from doc_to_atom.router.model import TwoStageRouter
 
 
 def atoms(n=6):
-    return [Atom(atom_id=f"a{i}", semantic_type="fact_claim", content=str(i), source_span=str(i), retrieval_text=str(i), is_answer_bearing=True, abstraction_level="evidence", confidence=0.8) for i in range(n)]
+    return [
+        Atom(
+            atom_id=f"a{i}",
+            semantic_type="fact_claim",
+            content=str(i),
+            source_span=str(i),
+            retrieval_text=str(i),
+            is_answer_bearing=True,
+            abstraction_level="evidence",
+            confidence=0.8,
+        )
+        for i in range(n)
+    ]
 
 
 def bank(n=6):
     keys = torch.nn.functional.normalize(torch.randn(n, 4), dim=-1)
-    return MemoryBank(keys=keys, factors_a={"0:q_proj": torch.randn(n, 2, 3)}, factors_b={"0:q_proj": torch.randn(n, 5, 2)}, mask_logits=torch.zeros(n, 1), atoms=atoms(n))
+    return MemoryBank(
+        keys=keys,
+        factors_a={"0:q_proj": torch.randn(n, 2, 3)},
+        factors_b={"0:q_proj": torch.randn(n, 5, 2)},
+        mask_logits=torch.zeros(n, 1),
+        atoms=atoms(n),
+    )
 
 
 def test_router_topk_and_weights_sum_one():
@@ -42,4 +60,3 @@ def test_irrelevant_objective_suppresses_composed_norm():
     composed = MemoryComposer()(memory, torch.tensor([0, 1]), torch.tensor([0.5, 0.5]))
     loss = irrelevant_suppression_loss(composed)
     assert torch.isfinite(loss) and loss > 0
-

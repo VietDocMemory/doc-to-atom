@@ -24,9 +24,12 @@ def word_f1(prediction: str, gold: str) -> float:
 
 
 def rouge_l(prediction: str, gold: str) -> float:
-    return rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False).score(gold, prediction)["rougeL"].fmeasure
+    return (
+        rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
+        .score(gold, prediction)["rougeL"]
+        .fmeasure
+    )
 
 
 def refusal_f1(prediction: str, target: str = "unanswerable") -> float:
     return word_f1(prediction, target)
-

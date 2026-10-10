@@ -37,4 +37,3 @@ class MemoryBank(CompiledAtoms):
             else MicroKV(self.micro_kv.keys.to(device), self.micro_kv.values.to(device)),
             atoms=self.atoms,
         )
-

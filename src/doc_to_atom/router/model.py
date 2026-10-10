@@ -65,7 +65,9 @@ class TwoStageRouter(nn.Module):
             [
                 torch.tensor([atom.confidence for atom in atoms], device=device),
                 torch.tensor([float(atom.is_answer_bearing) for atom in atoms], device=device),
-                torch.tensor([float(atom.conflict_group is not None) for atom in atoms], device=device),
+                torch.tensor(
+                    [float(atom.conflict_group is not None) for atom in atoms], device=device
+                ),
                 type_signal,
             ],
             dim=-1,
@@ -119,4 +121,3 @@ class TwoStageRouter(nn.Module):
             final_scores=final_scores,
             routing_weights=routing_weights,
         )
-

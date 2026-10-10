@@ -12,4 +12,3 @@ __all__ = [
     "parse_questions_xml",
     "validate_record",
 ]
-

@@ -76,7 +76,9 @@ def _kl(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
     return F.kl_div(F.log_softmax(left, -1), F.softmax(right, -1), reduction="batchmean")
 
 
-def composition_consistency_loss(main_logits: torch.Tensor, forced_logits: torch.Tensor) -> torch.Tensor:
+def composition_consistency_loss(
+    main_logits: torch.Tensor, forced_logits: torch.Tensor
+) -> torch.Tensor:
     return 0.5 * (_kl(main_logits, forced_logits) + _kl(forced_logits, main_logits))
 
 
@@ -99,4 +101,3 @@ def confidence_alignment_loss(
 ) -> torch.Tensor:
     target = selected_confidences / selected_confidences.sum().clamp_min(1e-8)
     return F.mse_loss(routing_weights, target)
-

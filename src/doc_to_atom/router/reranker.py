@@ -14,4 +14,3 @@ class FrozenBGEReranker:
 
     def predict(self, pairs: list[tuple[str, str]]) -> torch.Tensor:
         return torch.as_tensor(self.model.predict(pairs, convert_to_numpy=True))
-

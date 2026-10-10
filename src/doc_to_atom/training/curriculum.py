@@ -45,4 +45,3 @@ def stage_for_step(step: int) -> CurriculumStage:
         if step >= stage.start_step and (stage.end_step is None or step < stage.end_step):
             return stage
     raise AssertionError("unreachable")
-

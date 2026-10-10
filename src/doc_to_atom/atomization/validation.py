@@ -44,6 +44,8 @@ def validate_record(record: StructuredRecord, fuzzy_whitespace: bool = True) -> 
         qa.gold_atom_ids = known(qa.gold_atom_ids, qa.question_id, "gold")
         qa.supporting_atom_ids = known(qa.supporting_atom_ids, qa.question_id, "supporting")
         qa.distractor_atom_ids = known(qa.distractor_atom_ids, qa.question_id, "distractor")
+        if qa.question_type == "irrelevant":
+            qa.is_irrelevant = True
         if qa.is_irrelevant:
             if qa.gold_atom_ids:
                 record.annotation_meta.warnings.append(
@@ -68,4 +70,3 @@ def validate_record(record: StructuredRecord, fuzzy_whitespace: bool = True) -> 
         qa.is_generated_irrelevant for qa in record.qa_pairs
     )
     return record
-

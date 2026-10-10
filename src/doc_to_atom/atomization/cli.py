@@ -2,21 +2,41 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 from pathlib import Path
 
-from .client import MiniMaxAtomizer, MiniMaxConfig
+from doc_to_atom.config import load_project_env
+
+from .client import MiniMaxAtomizer, MiniMaxConfig, OpenAIAtomizer, OpenAIConfig
 from .models import QuestionAnnotation
+
+LOGGER = logging.getLogger(__name__)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Offline MiniMax-M2.5 semantic atomization")
+    load_project_env()
+    parser = argparse.ArgumentParser(description="Offline three-stage XML semantic atomization")
     parser.add_argument("--input", required=True, help="JSONL with id, context, questions")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--provider",
+        choices=["minimax", "openai"],
+        default=os.getenv("ANNOTATION_PROVIDER", "minimax"),
+    )
     args = parser.parse_args()
-    atomizer = MiniMaxAtomizer(MiniMaxConfig.from_env())
+    atomizer = (
+        OpenAIAtomizer(OpenAIConfig.from_env())
+        if args.provider == "openai"
+        else MiniMaxAtomizer(MiniMaxConfig.from_env())
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with Path(args.input).open(encoding="utf-8") as source, output.open("w", encoding="utf-8") as sink:
+    failed = 0
+    with (
+        Path(args.input).open(encoding="utf-8") as source,
+        output.open("w", encoding="utf-8") as sink,
+    ):
         for index, line in enumerate(source):
             raw = json.loads(line)
             questions = [
@@ -37,4 +57,12 @@ def main() -> None:
             )
             if record is not None:
                 sink.write(record.model_dump_json() + "\n")
-
+            else:
+                failed += 1
+                LOGGER.error(
+                    "record %s discarded during atomization: %s",
+                    raw.get("id", index),
+                    "; ".join(atomizer.last_errors) or "unknown error",
+                )
+    if failed:
+        raise RuntimeError(f"atomization discarded {failed} record(s); output is incomplete")

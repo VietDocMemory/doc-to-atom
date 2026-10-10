@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 import torch
@@ -100,9 +101,7 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     )
     query_inputs = _tokenize(tokenizer, [qa.question], 256, device)
     teacher_logits = system.teacher_forward(teacher_inputs)
-    student = system.student_forward(
-        student_inputs, query_inputs, qa.question, bank, stage.top_k
-    )
+    student = system.student_forward(student_inputs, query_inputs, qa.question, bank, stage.top_k)
     student_answer = _answer_logits(student.logits, answer_count)
     teacher_answer = _answer_logits(teacher_logits, min(teacher_count, answer_count))
     common = min(student_answer.shape[1], teacher_answer.shape[1])
@@ -119,7 +118,9 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     all_ids = [atom.atom_id for atom in record.atoms]
     relevant = set(qa.gold_atom_ids + qa.supporting_atom_ids)  # Assumption documented.
     gold_mask = torch.tensor([atom_id in relevant for atom_id in all_ids], device=device)
-    distractor_mask = torch.tensor([atom_id in qa.distractor_atom_ids for atom_id in all_ids], device=device)
+    distractor_mask = torch.tensor(
+        [atom_id in qa.distractor_atom_ids for atom_id in all_ids], device=device
+    )
     route = routing_loss(student.router.all_stage1_scores, gold_mask, distractor_mask)
 
     candidate_gold = gold_mask[student.router.stage1_indices]
@@ -142,9 +143,7 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         composition = student_answer.sum() * 0
 
     selected_atoms = [record.atoms[index] for index in student.router.selected_indices.tolist()]
-    selected_confidences = torch.tensor(
-        [atom.confidence for atom in selected_atoms], device=device
-    )
+    selected_confidences = torch.tensor([atom.confidence for atom in selected_atoms], device=device)
     gate_tensor = torch.stack(list(student.composed.gates.values()))
     losses = {
         "lm": lm,
@@ -168,10 +167,24 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
             student.router.routing_weights, selected_confidences
         ),
     }
-    return MultiObjectiveTrainer(config).combine(step, losses), float(lm.detach())
+    bundle = MultiObjectiveTrainer(config).combine(step, losses)
+    trace = {
+        "losses": {name: float(value.detach()) for name, value in losses.items()},
+        "selected_atom_ids": [atom.atom_id for atom in selected_atoms],
+        "routing_weights": [float(value) for value in student.router.routing_weights.detach()],
+        "routing_weight_sum": float(student.router.routing_weights.detach().sum()),
+        "stage1_candidate_count": int(student.router.stage1_indices.numel()),
+        "final_top_k": int(student.router.selected_indices.numel()),
+    }
+    return bundle, float(lm.detach()), trace
 
 
-def run_training(system, tokenizer, records: list[StructuredRecord], config: dict, output_dir: Path):
+def run_training(
+    system, tokenizer, records: list[StructuredRecord], config: dict, output_dir: Path
+):
+    started = time.perf_counter()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     train_records = [record for record in records if record.split not in {"validation", "test"}]
     validation_records = [record for record in records if record.split == "validation"]
     if not train_records:
@@ -191,6 +204,7 @@ def run_training(system, tokenizer, records: list[StructuredRecord], config: dic
     global_step = 0
     best_validation = float("inf")
     bad_epochs = 0
+    last_trace = None
     log_path = output_dir / "train_log.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
     optimizer.zero_grad(set_to_none=True)
@@ -203,9 +217,12 @@ def run_training(system, tokenizer, records: list[StructuredRecord], config: dic
             record_totals = []
             record_lm = []
             for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
-                bundle, lm_value = _one_question(system, tokenizer, record, qa, bank, config, global_step)
+                bundle, lm_value, trace = _one_question(
+                    system, tokenizer, record, qa, bank, config, global_step
+                )
                 record_totals.append(bundle.total)
                 record_lm.append(lm_value)
+                last_trace = trace
             if not record_totals:
                 continue
             record_total = torch.stack(record_totals).mean()
@@ -228,6 +245,9 @@ def run_training(system, tokenizer, records: list[StructuredRecord], config: dic
                     + "\n"
                 )
             global_step += 1
+            max_steps = config["training"].get("max_steps")
+            if max_steps is not None and global_step >= max_steps:
+                break
 
         if global_step % accumulation != 0:
             torch.nn.utils.clip_grad_norm_(trainable, config["training"]["gradient_clip"])
@@ -237,7 +257,11 @@ def run_training(system, tokenizer, records: list[StructuredRecord], config: dic
 
         validation_lm = _validation_lm(system, tokenizer, validation_records, config, global_step)
         save_checkpoint(
-            {"encoder_projection": system.encoder.projection, "compiler": system.compiler, "router": system.router},
+            {
+                "encoder_projection": system.encoder.projection,
+                "compiler": system.compiler,
+                "router": system.router,
+            },
             output_dir / "last.pt",
             optimizer,
             global_step,
@@ -247,7 +271,11 @@ def run_training(system, tokenizer, records: list[StructuredRecord], config: dic
                 best_validation = validation_lm
                 bad_epochs = 0
                 save_checkpoint(
-                    {"encoder_projection": system.encoder.projection, "compiler": system.compiler, "router": system.router},
+                    {
+                        "encoder_projection": system.encoder.projection,
+                        "compiler": system.compiler,
+                        "router": system.router,
+                    },
                     output_dir / "best.pt",
                     optimizer,
                     global_step,
@@ -260,7 +288,22 @@ def run_training(system, tokenizer, records: list[StructuredRecord], config: dic
                 if bad_epochs >= patience:
                     LOGGER.info("early stopping at epoch %s", epoch)
                     break
-    return {"steps": global_step, "best_validation_lm": best_validation}
+        max_steps = config["training"].get("max_steps")
+        if max_steps is not None and global_step >= max_steps:
+            break
+    return {
+        "steps": global_step,
+        "best_validation_lm": best_validation,
+        "last_trace": last_trace,
+        "elapsed_seconds": time.perf_counter() - started,
+        "cuda_available": torch.cuda.is_available(),
+        "cuda_peak_allocated_bytes": (
+            torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0
+        ),
+        "cuda_peak_reserved_bytes": (
+            torch.cuda.max_memory_reserved() if torch.cuda.is_available() else 0
+        ),
+    }
 
 
 @torch.no_grad()
@@ -272,7 +315,6 @@ def _validation_lm(system, tokenizer, records, config, step):
     for record in records:
         bank = _memory(system, tokenizer, record, config)
         for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
-            _bundle, lm = _one_question(system, tokenizer, record, qa, bank, config, step)
+            _bundle, lm, _trace = _one_question(system, tokenizer, record, qa, bank, config, step)
             values.append(lm)
     return sum(values) / len(values)
-

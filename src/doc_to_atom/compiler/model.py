@@ -70,7 +70,10 @@ class AtomMemoryCompiler(nn.Module):
             if micro_kv_slots is None
             else nn.Linear(
                 latent_dim,
-                2 * len({target.layer_index for target in targets}) * micro_kv_slots * micro_kv_head_dim,
+                2
+                * len({target.layer_index for target in targets})
+                * micro_kv_slots
+                * micro_kv_head_dim,
                 dtype=torch.float32,
             )
         )
@@ -102,4 +105,3 @@ class AtomMemoryCompiler(nn.Module):
             mask_logits=self.mask_head(latent),
             micro_kv=micro_kv,
         )
-

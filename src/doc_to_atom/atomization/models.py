@@ -100,4 +100,3 @@ class StructuredRecord(BaseModel):
     atoms: list[Atom]
     qa_pairs: list[QuestionAnnotation] = Field(default_factory=list)
     annotation_meta: AnnotationMeta = Field(default_factory=AnnotationMeta)
-

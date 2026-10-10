@@ -19,10 +19,21 @@ exact commit in `PAPER_SPEC.md`; this reproduction should be re-audited when the
 
 ## Resource-constrained deviations
 
+- The completed real-data smoke used OpenAI `gpt-4.1-mini-2025-04-14` instead of
+  MiniMax-M2.5 for all three annotation passes. Every output record carries this
+  `REPRODUCTION_DEVIATION` in `annotation_meta.prompt_provenance`.
+- OpenAI emitted scalar QA fields as XML attributes; the tolerant parser accepts
+  both attribute and child-element forms. Nineteen atoms used a semantic-type
+  label in `abstraction_level`; these known aliases were deterministically
+  normalized to `evidence` and retained as warnings. The schema enums were not
+  changed.
 - Single-GPU execution, smaller effective batch, gradient accumulation and checkpointing are runtime deviations, never silent algorithm changes.
 - FlashAttention-2 may fall back to SDPA when unavailable; each fallback is logged.
 - Synthetic smoke tests use tiny stand-ins and do not claim reproduction metrics.
 - Full Gemma/Qwen training requires gated model access and substantially more memory than a consumer GPU. The paper reports 13.43GB *additional compile memory* on Gemma, not total training memory; full training includes the frozen model, teacher/student activations, compiler heads, optimizer state and routing models.
+- The real-data smoke ran one record-step and one question on CPU because the
+  environment's PyTorch build has no CUDA support. FlashAttention-2 consequently
+  fell back to SDPA. This is a runtime-only deviation recorded in the manifest.
 
 ## Faithfulness boundary
 

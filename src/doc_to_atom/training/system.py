@@ -42,9 +42,7 @@ class TeacherStudentSystem(nn.Module):
         self.injector = injector
         freeze_base_model(self.base_model)
 
-    def build_memory(
-        self, atom_inputs: dict[str, torch.Tensor], atoms: list[Atom]
-    ) -> MemoryBank:
+    def build_memory(self, atom_inputs: dict[str, torch.Tensor], atoms: list[Atom]) -> MemoryBank:
         embeddings = self.encoder.encode_atoms(**atom_inputs)
         compiled = self.compiler(embeddings)
         return MemoryBank(**compiled.__dict__, atoms=atoms)
@@ -67,4 +65,3 @@ class TeacherStudentSystem(nn.Module):
         with self.injector.activate(composed):
             logits = self.base_model(**query_inputs, use_cache=False).logits
         return StudentOutput(logits=logits, router=routed, composed=composed)
-

@@ -28,7 +28,13 @@ def test_every_loss_is_finite():
     scores = torch.randn(3)
     gold = torch.tensor([True, False, False])
     distractor = torch.tensor([False, True, False])
-    bank = MemoryBank(keys=torch.randn(3, 2), factors_a={"k": torch.randn(3, 2, 3)}, factors_b={"k": torch.randn(3, 4, 2)}, mask_logits=torch.randn(3, 1), atoms=[])
+    bank = MemoryBank(
+        keys=torch.randn(3, 2),
+        factors_a={"k": torch.randn(3, 2, 3)},
+        factors_b={"k": torch.randn(3, 4, 2)},
+        mask_logits=torch.randn(3, 1),
+        atoms=[],
+    )
     composed = MemoryComposer()(bank, torch.tensor([0, 1]), torch.tensor([0.4, 0.6]))
     losses = [
         language_modeling_loss(logits, labels),
@@ -61,4 +67,3 @@ def test_checkpoint_save_load(tmp_path: Path):
         module.weight.zero_()
     assert load_checkpoint({"module": module}, path) == 17
     assert torch.allclose(module.weight, original)
-

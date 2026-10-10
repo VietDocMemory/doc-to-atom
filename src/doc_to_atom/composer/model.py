@@ -56,4 +56,3 @@ class MemoryComposer:
             values = weighted_values.permute(1, 0, 2, 3).reshape(layers, k * slots, head_dim)
             micro_kv = MicroKV(keys=keys, values=values)
         return ComposedMemory(factors_a, factors_b, gates, micro_kv)
-

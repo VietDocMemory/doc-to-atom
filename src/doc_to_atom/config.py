@@ -6,8 +6,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def load_project_env() -> None:
+    """Load local credentials without returning or logging their values."""
+    load_dotenv(ROOT / ".env", override=False)
 
 
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -53,8 +59,16 @@ def write_run_manifest(config: dict[str, Any], output: str | Path) -> None:
         deviations.extend(
             [
                 "single-GPU/resource-constrained profile",
-                "effective batch differs from paper" if config["training"]["effective_global_batch"] != 128 else "",
+                "effective batch differs from paper"
+                if config["training"]["effective_global_batch"] != 128
+                else "",
                 "loss coefficients and rho are assumptions because the paper does not publish them",
+                "record-step limit for smoke execution"
+                if config["training"].get("max_steps") is not None
+                else "",
+                "question count limited for smoke execution"
+                if config["data"].get("max_questions_per_sample", 8) < 8
+                else "",
             ]
         )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -65,4 +79,3 @@ def write_run_manifest(config: dict[str, Any], output: str | Path) -> None:
         ),
         encoding="utf-8",
     )
-
