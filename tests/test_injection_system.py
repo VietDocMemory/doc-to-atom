@@ -1,5 +1,6 @@
 import torch
 from conftest import ToyLM
+from torch.nn import functional as F
 
 from doc_to_atom.atomization.models import Atom
 from doc_to_atom.compiler.model import AtomMemoryCompiler
@@ -30,6 +31,30 @@ def test_dynamic_lora_changes_forward_only_when_active():
         adapted = model(ids).logits
     assert not torch.allclose(baseline, adapted)
     assert torch.allclose(baseline, model(ids).logits)
+
+
+def test_dynamic_lora_applies_gate_and_alpha_over_rank_exactly():
+    model = ToyLM(depth=6)
+    target = discover_target_shapes(model, [5], ["q_proj"])[0]
+    injector = DynamicLoRAInjector(model, [target], rank=2, alpha=4)
+    module = model.model.layers[5].self_attn.q_proj
+    x = torch.randn(1, 3, target.input_dim)
+    a = torch.randn(2, target.input_dim)
+    b = torch.randn(target.output_dim, 2)
+    gate = torch.tensor(0.25)
+    from doc_to_atom.composer.model import ComposedMemory
+
+    memory = ComposedMemory(
+        factors_a={target.key: a},
+        factors_b={target.key: b},
+        gates={target.key: gate},
+        micro_kv=None,
+    )
+    baseline = module(x)
+    with injector.activate(memory):
+        adapted = module(x)
+    expected = baseline + F.linear(F.linear(x, a), b) * gate * (4 / 2)
+    assert torch.allclose(adapted, expected)
 
 
 def test_teacher_student_forward():
