@@ -16,11 +16,12 @@ from typing import Any
 from .metrics import rouge_l, word_f1
 
 
-PAPER_METHOD_ORDER = ("base_context", "d2l_pt", "d2l_raw", "doc2atom")
+PAPER_METHOD_ORDER = ("base_context", "d2l_ckpt", "d2l_raw", "d2l_atom", "doc2atom")
 PAPER_METHOD_LABELS = {
     "base_context": "Base+ctx",
-    "d2l_pt": "D2L-pt",
+    "d2l_ckpt": "D2L-ckpt",
     "d2l_raw": "D2L-raw",
+    "d2l_atom": "D2L-atom",
     "doc2atom": "Doc2Atom",
 }
 

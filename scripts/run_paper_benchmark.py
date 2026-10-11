@@ -37,8 +37,10 @@ from run_heldout_generalization import _evaluate_base, _evaluate_doc2atom
 
 def _parse_external(value: str) -> tuple[str, Path]:
     method, separator, path = value.partition("=")
-    if not separator or method not in {"d2l_pt", "d2l_raw"} or not path:
-        raise ValueError("--external-predictions must be d2l_pt=PATH or d2l_raw=PATH")
+    if not separator or method not in {"d2l_ckpt", "d2l_raw", "d2l_atom"} or not path:
+        raise ValueError(
+            "--external-predictions must be d2l_ckpt=PATH, d2l_raw=PATH, or d2l_atom=PATH"
+        )
     return method, Path(path)
 
 
@@ -53,7 +55,7 @@ def main() -> None:
         "--external-predictions",
         action="append",
         default=[],
-        help="Optional D2L predictions: d2l_pt=PATH or d2l_raw=PATH",
+        help="Optional D2L predictions: d2l_ckpt=PATH, d2l_raw=PATH, or d2l_atom=PATH",
     )
     args = parser.parse_args()
     load_project_env()

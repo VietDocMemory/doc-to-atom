@@ -31,7 +31,7 @@ uv run pytest
 atomized records whose `split` is `test`, then writes scored predictions and
 F1/ROUGE-L Markdown tables.  It evaluates `Base+ctx` and `Doc2Atom` directly.
 The original Doc-to-LoRA code/checkpoints are not part of this repository, so
-`D2L-pt` and `D2L-raw` are supplied as external prediction JSONL files rather
+`D2L-ckpt`, `D2L-raw`, and `D2L-atom` are supplied as external prediction JSONL files rather
 than silently substituted with another implementation.
 
 ```bash
@@ -40,8 +40,9 @@ uv run scripts/run_paper_benchmark.py \
   --data data/benchmark_atoms.jsonl \
   --checkpoint outputs/train/best.pt \
   --model-label gemma2_2b_it \
-  --external-predictions d2l_pt=outputs/d2l_pt_predictions.jsonl \
+  --external-predictions d2l_ckpt=outputs/d2l_ckpt_predictions.jsonl \
   --external-predictions d2l_raw=outputs/d2l_raw_predictions.jsonl \
+  --external-predictions d2l_atom=outputs/d2l_atom_predictions.jsonl \
   --output-dir outputs/paper_benchmark/gemma
 
 uv run scripts/summarize_paper_benchmark.py \
