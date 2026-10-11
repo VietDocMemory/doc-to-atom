@@ -1,0 +1,24 @@
+# Reproducible benchmark manifest. Dataset versions and exact paper splits were
+# not published; pin a revision here before reporting a paper comparison.
+models:
+  gemma2_2b_it:
+    config: configs/gemma_paper.yaml
+  qwen3_4b_instruct:
+    config: configs/qwen_paper.yaml
+methods: [base_context, d2l_pt, d2l_raw, doc2atom]
+datasets:
+  - squad
+  - drop
+  - ropes
+  - qasper
+  - 2wikimultihopqa
+  - longbench_2wikimqa
+  - longbench_hotpotqa
+  - longbench_mfqa_en
+  - longbench_mfqa_zh
+  - longbench_musique
+  - longbench_narrativeqa
+  - longbench_qasper
+  - longbench_triviaqa
+metrics: [f1, rouge_l]
+split: test

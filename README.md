@@ -25,6 +25,51 @@ uv run scripts/evaluate.py --predictions outputs/predictions.jsonl
 uv run pytest
 ```
 
+## Paper-style benchmark reporting
+
+`scripts/run_paper_benchmark.py` evaluates a trained Doc2Atom checkpoint on
+atomized records whose `split` is `test`, then writes scored predictions and
+F1/ROUGE-L Markdown tables.  It evaluates `Base+ctx` and `Doc2Atom` directly.
+The original Doc-to-LoRA code/checkpoints are not part of this repository, so
+`D2L-pt` and `D2L-raw` are supplied as external prediction JSONL files rather
+than silently substituted with another implementation.
+
+```bash
+uv run scripts/run_paper_benchmark.py \
+  --config configs/resource_constrained.yaml \
+  --data data/benchmark_atoms.jsonl \
+  --checkpoint outputs/train/best.pt \
+  --model-label gemma2_2b_it \
+  --external-predictions d2l_pt=outputs/d2l_pt_predictions.jsonl \
+  --external-predictions d2l_raw=outputs/d2l_raw_predictions.jsonl \
+  --output-dir outputs/paper_benchmark/gemma
+
+uv run scripts/summarize_paper_benchmark.py \
+  --predictions outputs/paper_benchmark/gemma/scored_predictions.jsonl \
+  --predictions outputs/paper_benchmark/qwen/scored_predictions.jsonl \
+  --output-dir outputs/paper_benchmark/combined
+```
+
+Rows supplied by an external D2L file must have `dataset`, `split`,
+`prediction`, and `gold`; `model` is optional because the runner fills it from
+`--model-label`.  The shipped benchmark manifest is
+`configs/paper_benchmark.yaml`.  Its dataset versions/splits must be pinned by
+the experimenter because the paper does not disclose them.
+
+Prepare each pinned source split before atomization.  This supports local JSONL
+exports as well as explicit Hugging Face dataset revisions:
+
+```bash
+uv run scripts/prepare_benchmark.py \
+  --dataset squad --split train --source-jsonl sources/squad_train.jsonl \
+  --output data/raw/squad_train.jsonl
+uv run scripts/prepare_benchmark.py \
+  --dataset longbench_qasper --preprocessor longbench --split test \
+  --hf-dataset THUDM/LongBench --hf-config qasper --hf-split test \
+  --hf-revision PINNED_COMMIT --max-rows 100 \
+  --output data/raw/longbench_qasper_test.jsonl
+```
+
 OpenAI deviation example:
 
 ```bash
