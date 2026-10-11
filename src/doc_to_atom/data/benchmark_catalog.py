@@ -17,11 +17,11 @@ class BenchmarkDataset:
 
 
 def _longbench(name: str) -> BenchmarkDataset:
-    return BenchmarkDataset(f"longbench_{name}", "THUDM/LongBench", name, "test", "longbench")
+    return BenchmarkDataset(f"longbench_{name}", "zai-org/LongBench", name, "test", "longbench")
 
 
 # The three short-context entries match the public source identifiers used by
-# doc-to-lora. LongBench task names are official THUDM/LongBench configs.
+# doc-to-lora. LongBench task names are official zai-org/LongBench configs.
 # Standalone 2WikiMultihopQA/QASPER are intentionally not auto-downloaded:
 # their source releases are not pinned by the paper, so use a pinned JSONL
 # export with prepare_benchmark.py rather than silently choosing a version.

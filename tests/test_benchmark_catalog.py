@@ -10,7 +10,7 @@ def test_catalog_covers_all_longbench_rows_in_paper_table():
         "longbench_qasper", "longbench_triviaqa",
     }
     assert expected <= set(BENCHMARK_CATALOG)
-    assert all(BENCHMARK_CATALOG[name].hf_dataset == "THUDM/LongBench" for name in expected)
+    assert all(BENCHMARK_CATALOG[name].hf_dataset == "zai-org/LongBench" for name in expected)
 
 
 def test_unknown_catalog_alias_requires_pinned_custom_export():

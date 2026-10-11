@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 from datasets import load_dataset
+from huggingface_hub import hf_hub_download
 
 from doc_to_atom.data.benchmark_catalog import get_benchmark_dataset
 
@@ -18,6 +20,29 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from prepare_benchmark import prepare_rows
+
+
+def _load_longbench_rows(spec, revision: str | None) -> list[dict[str, object]]:
+    """Read LongBench's JSONL directly from its published data.zip.
+
+    Recent ``datasets`` versions reject legacy dataset loading scripts.  The
+    LongBench Hub repository still includes ``LongBench.py``, so attempting
+    ``load_dataset`` hits that restriction.  Reading the repository's public
+    archive directly avoids executing the legacy script.
+    """
+    archive = hf_hub_download(
+        repo_id=spec.hf_dataset,
+        repo_type="dataset",
+        filename="data.zip",
+        revision=revision,
+    )
+    expected = f"{spec.hf_config}.jsonl"
+    with zipfile.ZipFile(archive) as bundle:
+        members = [name for name in bundle.namelist() if name.endswith(expected)]
+        if len(members) != 1:
+            raise ValueError(f"could not find exactly one {expected} in {archive}; found {members}")
+        with bundle.open(members[0]) as source:
+            return [json.loads(line) for line in source if line.strip()]
 
 
 def main() -> None:
@@ -34,8 +59,13 @@ def main() -> None:
     manifest: list[dict[str, object]] = []
     for name in args.datasets:
         spec = get_benchmark_dataset(name)
-        remote = load_dataset(spec.hf_dataset, spec.hf_config, split=spec.hf_split, revision=args.hf_revision)
-        rows = [dict(row) for row in remote]
+        if spec.hf_dataset == "zai-org/LongBench":
+            rows = _load_longbench_rows(spec, args.hf_revision)
+        else:
+            remote = load_dataset(
+                spec.hf_dataset, spec.hf_config, split=spec.hf_split, revision=args.hf_revision
+            )
+            rows = [dict(row) for row in remote]
         if args.max_rows is not None:
             rows = rows[: args.max_rows]
         records = prepare_rows(rows, spec.name, args.split, spec.preprocessor)
