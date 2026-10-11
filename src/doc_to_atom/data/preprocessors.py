@@ -20,6 +20,10 @@ def squad(row: dict[str, Any]) -> dict[str, Any]:
 
 def drop(row: dict[str, Any]) -> dict[str, Any]:
     answer = row.get("answers_spans") or row.get("answer")
+    # The current public ucinlp/drop schema stores answers in
+    # ``{"spans": [...], "types": [...]}``, unlike SQuAD's ``text`` key.
+    if isinstance(answer, dict) and "spans" in answer:
+        answer = answer["spans"]
     return {"context": row["passage"], "question": row["question"], "answers": _answers(answer)}
 
 
