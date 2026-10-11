@@ -74,6 +74,44 @@ uv run scripts/prepare_benchmark.py \
   --output data/raw/longbench_qasper_test.jsonl
 ```
 
+### D2A-only multi-dataset workflow
+
+`prepare_d2a_benchmark.py` and `run_d2a_benchmark.py` use the same
+`--datasets ...` pattern as the adjacent Doc-to-LoRA benchmark scripts.  They
+run **only** `Base+ctx` and `Doc2Atom`; D2L is neither run nor reported.
+Preparation intentionally stops before atomization, because atomizing a full
+suite calls the configured provider and can incur API cost.
+
+```bash
+# Download + normalize sources. Add --max-rows 5 for an inexpensive smoke run.
+uv run scripts/prepare_d2a_benchmark.py \
+  --datasets squad drop ropes longbench_2wikimqa longbench_hotpotqa \
+             longbench_multifieldqa_en longbench_multifieldqa_zh \
+             longbench_musique longbench_narrativeqa longbench_qasper longbench_triviaqa \
+  --split test --output-dir data/benchmark_raw
+
+# Atomize every normalized file. The explicit loop makes API cost visible.
+for f in data/benchmark_raw/*_test.jsonl; do
+  name=$(basename "$f")
+  uv run scripts/atomize.py --provider openai --input "$f" --output "data/benchmark_atoms/$name"
+done
+
+# Load the checkpoint once and produce one combined D2A-only table.
+uv run scripts/run_d2a_benchmark.py \
+  --config configs/resource_constrained.yaml \
+  --checkpoint outputs/train/best.pt \
+  --datasets squad drop ropes longbench_2wikimqa longbench_hotpotqa \
+             longbench_multifieldqa_en longbench_multifieldqa_zh \
+             longbench_musique longbench_narrativeqa longbench_qasper longbench_triviaqa \
+  --data-dir data/benchmark_atoms --split test --model-label gemma2_2b_it \
+  --output-dir outputs/d2a_benchmark/gemma
+```
+
+The paper image also lists standalone `2wikimultihopqa` and `qasper`. Their
+source versions are not disclosed by the paper, so they are deliberately not
+auto-downloaded. Export a pinned release to JSONL, prepare it with
+`prepare_benchmark.py --source-jsonl ...`, and atomize it before evaluation.
+
 OpenAI deviation example:
 
 ```bash
