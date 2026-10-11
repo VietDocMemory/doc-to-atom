@@ -1,0 +1,15 @@
+# Runnable Qwen counterpart of heldout_small.yaml.  Paper-unspecified loss
+# coefficients remain inherited from resource_constrained.yaml and are logged.
+_base_: heldout_small.yaml
+model:
+  name: Qwen/Qwen3-4B-Instruct-2507
+  family: qwen3
+  hidden_size: 2560
+  decoder_layers: 36
+  memory_layer_indices: [32, 33, 34, 35]
+  target_modules: [q_proj, v_proj, o_proj, down_proj]
+  dtype: bfloat16
+  flash_attention_2: true
+  frozen: true
+training:
+  learning_rate: 8.0e-5

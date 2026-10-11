@@ -4,7 +4,7 @@ models:
   gemma2_2b_it:
     config: configs/gemma_paper.yaml
   qwen3_4b_instruct:
-    config: configs/qwen_paper.yaml
+    config: configs/qwen_heldout_small.yaml
 methods: [base_context, d2l_pt, d2l_raw, doc2atom]
 datasets:
   - squad
