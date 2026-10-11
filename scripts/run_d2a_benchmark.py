@@ -21,7 +21,9 @@ if str(SCRIPT_DIR) not in sys.path:
 from run_heldout_generalization import _evaluate_base, _evaluate_doc2atom
 
 
-def load_named_records(data_dir: str | Path, datasets: list[str], split: str):
+def load_named_records(
+    data_dir: str | Path, datasets: list[str], split: str, allow_invalid_spans: bool = False
+):
     """Read each atomized <dataset>_<split>.jsonl after strict validation."""
     base = Path(data_dir)
     records, sources = [], []
@@ -32,7 +34,7 @@ def load_named_records(data_dir: str | Path, datasets: list[str], split: str):
             raise FileNotFoundError(
                 f"missing atomized benchmark file: {path}. Run atomize.py after prepare_d2a_benchmark.py."
             )
-        stats = validate_jsonl(path, reject_span_mismatch=True)
+        stats = validate_jsonl(path, reject_span_mismatch=not allow_invalid_spans)
         selected = [record for record in read_jsonl(path) if record.split == split]
         if not selected:
             raise ValueError(f"{path} contains no records with split='{split}'")
@@ -50,11 +52,21 @@ def main() -> None:
     parser.add_argument("--split", default="test", choices=["train", "validation", "test"])
     parser.add_argument("--model-label", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--allow-invalid-spans",
+        action="store_true",
+        help=(
+            "Run despite atom source-span mismatches and record them in benchmark_run.json. "
+            "Use only for diagnostic/smoke runs; strict validation is the default."
+        ),
+    )
     args = parser.parse_args()
 
     load_project_env()
     config = load_config(args.config)
-    records, data = load_named_records(args.data_dir, args.datasets, args.split)
+    records, data = load_named_records(
+        args.data_dir, args.datasets, args.split, allow_invalid_spans=args.allow_invalid_spans
+    )
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     write_run_manifest(config, output / "run_manifest.json")
@@ -73,7 +85,8 @@ def main() -> None:
         rows.append(result)
     result = write_report(rows, output)
     result.update({"checkpoint": str(Path(args.checkpoint).resolve()), "checkpoint_step": step,
-                   "datasets": data, "methods_present": ["base_context", "doc2atom"]})
+                   "datasets": data, "methods_present": ["base_context", "doc2atom"],
+                   "span_validation": "diagnostic_allowed" if args.allow_invalid_spans else "strict"})
     (output / "benchmark_run.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
