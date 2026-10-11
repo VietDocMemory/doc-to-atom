@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from datasets import load_dataset
 
 from doc_to_atom.data.benchmark_catalog import get_benchmark_dataset
+
+# Hosted notebook launchers may execute this file without adding its directory
+# to sys.path. Keep the shared row-normalization implementation in one place.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from prepare_benchmark import prepare_rows
 
 
