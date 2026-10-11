@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from doc_to_atom.config import load_config, load_project_env, write_run_manifest
@@ -23,6 +24,14 @@ from doc_to_atom.training.factory import build_system
 
 # Reuse the tested generation paths used by the held-out diagnostic.  They run
 # greedy Base+ctx and Doc2Atom generation and attach retrieval diagnostics.
+# ``uv run scripts/name.py`` on hosted notebook runtimes can omit the script
+# directory from sys.path.  Add only this sibling directory so the shared,
+# tested generation helpers remain importable without depending on the caller's
+# current directory.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from run_heldout_generalization import _evaluate_base, _evaluate_doc2atom
 
 
