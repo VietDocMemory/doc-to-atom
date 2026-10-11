@@ -71,8 +71,15 @@ def _summarize(rows: list[dict], method: str, split: str) -> dict:
     return summary
 
 
-def _routing_metrics(ranked: list[str], gold: list[str]) -> tuple[float, float, float, float]:
+def _routing_metrics(
+    ranked: list[str], gold: list[str]
+) -> tuple[float | None, float | None, float | None, float | None]:
     gold_set = set(gold)
+    # Some externally atomized long-context questions have no surviving
+    # provenance links after validation. They remain valid answer-quality
+    # examples, but retrieval recall is undefined rather than zero.
+    if not gold_set:
+        return None, None, None, None
     recall = lambda k: len(gold_set.intersection(ranked[:k])) / len(gold_set)
     first = next((rank for rank, atom_id in enumerate(ranked, 1) if atom_id in gold_set), None)
     return recall(1), recall(4), recall(8), 0.0 if first is None else 1.0 / first
