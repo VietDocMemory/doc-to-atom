@@ -56,6 +56,9 @@ Rows supplied by an external D2L file must have `dataset`, `split`,
 `--model-label`.  The shipped benchmark manifest is
 `configs/paper_benchmark.yaml`.  Its dataset versions/splits must be pinned by
 the experimenter because the paper does not disclose them.
+For a longer single-GPU D2A-only run, use `configs/resource_constrained.yaml`
+for Gemma or `configs/qwen_resource_constrained.yaml` for Qwen; the
+`*_heldout_small.yaml` profiles deliberately cap a small diagnostic.
 
 Prepare each pinned source split before atomization.  This supports local JSONL
 exports as well as explicit Hugging Face dataset revisions:

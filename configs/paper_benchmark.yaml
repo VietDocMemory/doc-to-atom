@@ -2,9 +2,9 @@
 # not published; pin a revision here before reporting a paper comparison.
 models:
   gemma2_2b_it:
-    config: configs/heldout_small.yaml
+    config: configs/resource_constrained.yaml
   qwen3_4b_instruct:
-    config: configs/qwen_heldout_small.yaml
+    config: configs/qwen_resource_constrained.yaml
 methods: [base_context, d2l_ckpt, d2l_raw, d2l_atom, doc2atom]
 datasets:
   - squad
