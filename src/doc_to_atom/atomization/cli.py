@@ -11,6 +11,8 @@ from doc_to_atom.config import load_project_env
 from .client import (
     GeminiAtomizer,
     GeminiConfig,
+    GroqAtomizer,
+    GroqConfig,
     MiniMaxAtomizer,
     MiniMaxConfig,
     OpenAIAtomizer,
@@ -38,7 +40,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=["minimax", "openai", "gemini"],
+        choices=["minimax", "openai", "gemini", "groq"],
         default=os.getenv("ANNOTATION_PROVIDER", "minimax"),
     )
     args = parser.parse_args()
@@ -47,6 +49,8 @@ def main() -> None:
         if args.provider == "openai"
         else GeminiAtomizer(GeminiConfig.from_env())
         if args.provider == "gemini"
+        else GroqAtomizer(GroqConfig.from_env())
+        if args.provider == "groq"
         else MiniMaxAtomizer(MiniMaxConfig.from_env())
     )
     output = Path(args.output)

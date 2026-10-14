@@ -67,10 +67,29 @@ class GeminiConfig:
         )
 
 
+@dataclass
+class GroqConfig:
+    """Groq through its OpenAI-compatible chat-completions endpoint."""
+
+    api_key: str
+    model: str = "openai/gpt-oss-20b"
+    temperature: float = 0.0
+    max_tokens: int = 8192
+    irrelevant_probe_count: int = 2
+    decomposition_retries: int = 1
+
+    @classmethod
+    def from_env(cls) -> GroqConfig:
+        return cls(
+            api_key=os.environ["GROQ_API_KEY"],
+            model=os.getenv("GROQ_ANNOTATION_MODEL", "openai/gpt-oss-20b"),
+        )
+
+
 class ThreeStageXMLAtomizer:
     def __init__(
         self,
-        config: MiniMaxConfig | OpenAIConfig | GeminiConfig,
+        config: MiniMaxConfig | OpenAIConfig | GeminiConfig | GroqConfig,
         provider: str,
         base_url: str | None = None,
     ):
@@ -188,7 +207,7 @@ class ThreeStageXMLAtomizer:
             qa_pairs=annotated,
             annotation_meta=meta,
         )
-        if self.provider in {"openai", "gemini"}:
+        if self.provider in {"openai", "gemini", "groq"}:
             record.annotation_meta.prompt_provenance = (
                 "RECONSTRUCTED_PROMPT_NOT_OFFICIAL; REPRODUCTION_DEVIATION: "
                 f"{self.provider.title()} replaces MiniMax-M2.5; model={self.resolved_model}"
@@ -215,3 +234,12 @@ class GeminiAtomizer(ThreeStageXMLAtomizer):
 
     def __init__(self, config: GeminiConfig):
         super().__init__(config, provider="gemini", base_url=self.BASE_URL)
+
+
+class GroqAtomizer(ThreeStageXMLAtomizer):
+    """REPRODUCTION_DEVIATION: Groq-hosted GPT-OSS replaces MiniMax-M2.5."""
+
+    BASE_URL = "https://api.groq.com/openai/v1"
+
+    def __init__(self, config: GroqConfig):
+        super().__init__(config, provider="groq", base_url=self.BASE_URL)
