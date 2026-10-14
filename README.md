@@ -125,8 +125,10 @@ uv run scripts/train.py --config configs/resource_constrained.yaml \
 Credentials are loaded from the ignored `.env`. MiniMax uses `MINIMAX_API_KEY`,
 `MINIMAX_BASE_URL`, and optional `MINIMAX_MODEL`. The supported OpenAI deviation uses
 `OPENAI_API_KEY` and optional `OPENAI_ANNOTATION_MODEL` (default `gpt-4.1-mini`) with
-`--provider openai`. Prompts are reconstructed, not official; OpenAI output is tagged
-`REPRODUCTION_DEVIATION` in annotation provenance.
+`--provider openai`. Gemini uses `GEMINI_API_KEY` and optional
+`GEMINI_ANNOTATION_MODEL` (default `gemini-3.5-flash-lite`) with `--provider gemini`.
+Gemini calls Google's OpenAI-compatible endpoint. Prompts are reconstructed, not
+official; non-MiniMax output is tagged `REPRODUCTION_DEVIATION` in annotation provenance.
 
 See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
 

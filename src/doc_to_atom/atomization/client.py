@@ -48,9 +48,31 @@ class OpenAIConfig:
         )
 
 
+@dataclass
+class GeminiConfig:
+    """Gemini configuration through Google's OpenAI-compatible endpoint."""
+
+    api_key: str
+    model: str = "gemini-3.5-flash-lite"
+    temperature: float = 0.0
+    max_tokens: int = 8192
+    irrelevant_probe_count: int = 2
+    decomposition_retries: int = 1
+
+    @classmethod
+    def from_env(cls) -> GeminiConfig:
+        return cls(
+            api_key=os.environ["GEMINI_API_KEY"],
+            model=os.getenv("GEMINI_ANNOTATION_MODEL", "gemini-3.5-flash-lite"),
+        )
+
+
 class ThreeStageXMLAtomizer:
     def __init__(
-        self, config: MiniMaxConfig | OpenAIConfig, provider: str, base_url: str | None = None
+        self,
+        config: MiniMaxConfig | OpenAIConfig | GeminiConfig,
+        provider: str,
+        base_url: str | None = None,
     ):
         self.config = config
         self.provider = provider
@@ -166,10 +188,10 @@ class ThreeStageXMLAtomizer:
             qa_pairs=annotated,
             annotation_meta=meta,
         )
-        if self.provider == "openai":
+        if self.provider in {"openai", "gemini"}:
             record.annotation_meta.prompt_provenance = (
                 "RECONSTRUCTED_PROMPT_NOT_OFFICIAL; REPRODUCTION_DEVIATION: "
-                f"OpenAI replaces MiniMax-M2.5; model={self.resolved_model}"
+                f"{self.provider.title()} replaces MiniMax-M2.5; model={self.resolved_model}"
             )
         return validate_record(record)
 
@@ -184,3 +206,12 @@ class OpenAIAtomizer(ThreeStageXMLAtomizer):
 
     def __init__(self, config: OpenAIConfig):
         super().__init__(config, provider="openai")
+
+
+class GeminiAtomizer(ThreeStageXMLAtomizer):
+    """Gemini via Google's documented OpenAI-compatible API endpoint."""
+
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    def __init__(self, config: GeminiConfig):
+        super().__init__(config, provider="gemini", base_url=self.BASE_URL)

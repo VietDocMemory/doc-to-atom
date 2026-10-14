@@ -8,7 +8,14 @@ from pathlib import Path
 
 from doc_to_atom.config import load_project_env
 
-from .client import MiniMaxAtomizer, MiniMaxConfig, OpenAIAtomizer, OpenAIConfig
+from .client import (
+    GeminiAtomizer,
+    GeminiConfig,
+    MiniMaxAtomizer,
+    MiniMaxConfig,
+    OpenAIAtomizer,
+    OpenAIConfig,
+)
 from .models import QuestionAnnotation, StructuredRecord
 
 LOGGER = logging.getLogger(__name__)
@@ -31,13 +38,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=["minimax", "openai"],
+        choices=["minimax", "openai", "gemini"],
         default=os.getenv("ANNOTATION_PROVIDER", "minimax"),
     )
     args = parser.parse_args()
     atomizer = (
         OpenAIAtomizer(OpenAIConfig.from_env())
         if args.provider == "openai"
+        else GeminiAtomizer(GeminiConfig.from_env())
+        if args.provider == "gemini"
         else MiniMaxAtomizer(MiniMaxConfig.from_env())
     )
     output = Path(args.output)
