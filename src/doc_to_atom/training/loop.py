@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch.nn import functional as F
@@ -268,7 +270,12 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
 
 
 def run_training(
-    system, tokenizer, records: list[StructuredRecord], config: dict, output_dir: Path
+    system,
+    tokenizer,
+    records: list[StructuredRecord],
+    config: dict,
+    output_dir: Path,
+    metric_logger: Callable[[dict[str, Any], int], None] | None = None,
 ):
     started = time.perf_counter()
     if torch.cuda.is_available():
@@ -339,23 +346,20 @@ def run_training(
                 )
                 system.train()
                 system.base_model.eval()
+            event = {
+                "epoch": epoch,
+                "step": global_step,
+                "curriculum_step": config["training"].get("initial_curriculum_step", 0)
+                + global_step
+                - 1,
+                "learning_rate": scheduler.get_last_lr()[0],
+                "train": _split_trace_report(record_traces),
+                "validation": last_validation_report,
+            }
             with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps(
-                        {
-                            "epoch": epoch,
-                            "step": global_step,
-                            "curriculum_step": config["training"].get(
-                                "initial_curriculum_step", 0
-                            )
-                            + global_step
-                            - 1,
-                            "train": _split_trace_report(record_traces),
-                            "validation": last_validation_report,
-                        }
-                    )
-                    + "\n"
-                )
+                handle.write(json.dumps(event) + "\n")
+            if metric_logger is not None:
+                metric_logger(event, global_step)
             max_steps = config["training"].get("max_steps")
             if max_steps is not None and global_step >= max_steps:
                 break

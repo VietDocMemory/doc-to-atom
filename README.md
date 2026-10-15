@@ -134,6 +134,23 @@ non-MiniMax output is tagged `REPRODUCTION_DEVIATION` in annotation provenance.
 
 See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
 
+### Optional Weights & Biases tracking
+
+Install the optional training dependencies, log in once in the Molab terminal, then add a
+project name to any training command. The integration logs scalar train/validation losses,
+routing diagnostics, learning rate, configuration, and the final run summary; it does not
+upload raw documents, questions, predictions, or API keys.
+
+```bash
+uv sync --extra train --extra test
+uv run wandb login
+uv run scripts/train.py --config configs/resource_constrained.yaml --data atoms.jsonl \
+  --wandb-project doc-to-atom --wandb-run-name gemma-squad-100
+```
+
+Use `--wandb-mode offline` to save an offline run in Molab and upload it later with
+`uv run wandb sync wandb/offline-run-*`.
+
 The upstream repository linked by the paper was audited at commit
 `0848bda2aaef69b375436e24a30c8469a3f0560c`; it contained only a two-line
 README, so no upstream implementation or checkpoint was available to reuse.

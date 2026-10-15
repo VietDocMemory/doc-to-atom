@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-train = ["accelerate>=1.6", "deepspeed>=0.17; platform_system != 'Windows'"]
+train = ["accelerate>=1.6", "deepspeed>=0.17; platform_system != 'Windows'", "wandb>=0.19"]
 test = ["pytest>=8"]
 
 [project.scripts]

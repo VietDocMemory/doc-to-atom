@@ -27,6 +27,10 @@ def main() -> None:
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--max-steps", type=int, help="Smoke-only record-step limit")
     parser.add_argument("--max-questions", type=int, help="Smoke-only questions per record")
+    parser.add_argument("--wandb-project", help="Enable optional Weights & Biases experiment tracking")
+    parser.add_argument("--wandb-entity")
+    parser.add_argument("--wandb-run-name")
+    parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="online")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     config = load_config(args.config)
@@ -46,5 +50,25 @@ def main() -> None:
     (output / "initialization_report.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
-    result = run_training(system, _tokenizer, read_jsonl(args.data), config, output)
+    wandb_run = None
+    metric_logger = None
+    if args.wandb_project:
+        from doc_to_atom.training.tracking import start_wandb
+
+        wandb_run, metric_logger = start_wandb(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            run_name=args.wandb_run_name,
+            mode=args.wandb_mode,
+            config=config,
+        )
+    try:
+        result = run_training(
+            system, _tokenizer, read_jsonl(args.data), config, output, metric_logger
+        )
+        if wandb_run is not None:
+            wandb_run.summary.update(result)
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish()
     print(json.dumps({**report, "training": result}, indent=2))
