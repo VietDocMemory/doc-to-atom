@@ -17,6 +17,7 @@ class TrainerState:
     sampler_state: dict[str, Any] = field(default_factory=dict)
     best_validation: float = float("inf")
     bad_validations: int = 0
+    validation_observations: int = 0
     early_stopped: bool = False
     config_fingerprint: str = ""
     dataset_fingerprint: str = ""

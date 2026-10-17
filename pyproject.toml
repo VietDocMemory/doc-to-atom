@@ -40,6 +40,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "integration: bounded multi-component integration tests",
+]
 
 [tool.ruff]
 line-length = 100

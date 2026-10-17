@@ -85,14 +85,14 @@
 - Test: `tests/test_gradient_flow.py`
 - Test: `tests/test_one_example_overfit.py`
 
-- [ ] Write failing tests showing scheduler and curriculum advance only on `optimizer_step`, partial accumulation flush is handled exactly once, and resume begins at the next unconsumed record.
-- [ ] Refactor into explicit micro-step and optimizer-step functions; persist deterministic epoch ordering and cursor.
-- [ ] Add configurable early stopping with metric, mode, patience, minimum delta, warmup validations, and best-checkpoint link/copy.
-- [ ] Log objective components, gradient norm, LR, curriculum stage, timing, memory, and validation state at optimizer boundaries.
-- [ ] Add gradient-flow assertions for encoder projection, compiler, router, and frozen base model.
-- [ ] Add a bounded one-example overfit test marked `integration`.
-- [ ] Run `py -m uv run pytest tests/test_training_loop.py tests/test_gradient_flow.py tests/test_one_example_overfit.py -q`.
-- [ ] Commit: `fix(training): make optimizer step resume and stopping exact`.
+- [x] Write failing tests showing scheduler and curriculum advance only on `optimizer_step`, partial accumulation flush is handled exactly once, and resume begins at the next unconsumed record.
+- [x] Refactor into explicit micro-step and optimizer-step boundaries; persist deterministic epoch ordering and cursor.
+- [x] Add configurable early stopping with metric, mode, patience, minimum delta, warmup validations, and best-checkpoint pointer.
+- [x] Log objective components, gradient norm, LR, curriculum stage, timing, memory, and validation state at optimizer boundaries.
+- [x] Add gradient-flow assertions for encoder projection, compiler, router, and frozen base model.
+- [x] Add a bounded one-example overfit test marked `integration`.
+- [x] Run `py -m uv run pytest tests/test_training_loop.py tests/test_gradient_flow.py tests/test_one_example_overfit.py -q`.
+- [x] Commit: `fix(training): make optimizer step resume and stopping exact`.
 
 ## Task 5: Complete the training CLI and Molab launch path
 

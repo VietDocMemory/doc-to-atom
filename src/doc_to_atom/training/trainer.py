@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import torch
@@ -26,6 +27,54 @@ LOGGER = logging.getLogger(__name__)
 class LossBundle:
     values: dict[str, torch.Tensor]
     total: torch.Tensor
+
+
+@dataclass(frozen=True)
+class EarlyStoppingObservation:
+    improved: bool
+    should_stop: bool
+    nonfinite: bool = False
+
+
+@dataclass
+class EarlyStopping:
+    mode: str
+    patience: int
+    min_delta: float = 0.0
+    warmup_observations: int = 0
+    observations: int = 0
+    best: float | None = None
+    bad_validations: int = 0
+    stopped: bool = False
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"min", "max"}:
+            raise ValueError("early stopping mode must be 'min' or 'max'")
+        if self.patience < 1:
+            raise ValueError("early stopping patience must be at least 1")
+        if self.min_delta < 0:
+            raise ValueError("early stopping min_delta must be non-negative")
+        if self.warmup_observations < 0:
+            raise ValueError("early stopping warmup_observations must be non-negative")
+
+    def observe(self, value: float) -> EarlyStoppingObservation:
+        self.observations += 1
+        nonfinite = not math.isfinite(value)
+        if self.best is None:
+            improved = not nonfinite
+        elif self.mode == "min":
+            improved = not nonfinite and value < self.best - self.min_delta
+        else:
+            improved = not nonfinite and value > self.best + self.min_delta
+        if improved:
+            self.best = value
+            self.bad_validations = 0
+        elif self.observations <= self.warmup_observations:
+            self.bad_validations = 0
+        else:
+            self.bad_validations += 1
+        self.stopped = self.bad_validations >= self.patience
+        return EarlyStoppingObservation(improved, self.stopped, nonfinite)
 
 
 class MultiObjectiveTrainer:

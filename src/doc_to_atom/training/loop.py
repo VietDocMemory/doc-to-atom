@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 import time
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from transformers import get_cosine_schedule_with_warmup
 
 from doc_to_atom.atomization.models import StructuredRecord
 from doc_to_atom.compiler.memory import MemoryBank
+from doc_to_atom.config import config_fingerprint
 from doc_to_atom.losses.objectives import (
     composition_consistency_loss,
     confidence_alignment_loss,
@@ -21,9 +24,11 @@ from doc_to_atom.losses.objectives import (
     routing_loss,
     sparse_regularization_loss,
 )
-from doc_to_atom.training.checkpoint import save_checkpoint
+from doc_to_atom.runtime.run import atomic_write_json
+from doc_to_atom.training.checkpoint import load_training_checkpoint, save_training_checkpoint
 from doc_to_atom.training.curriculum import stage_for_step
-from doc_to_atom.training.trainer import MultiObjectiveTrainer
+from doc_to_atom.training.state import TrainerState
+from doc_to_atom.training.trainer import EarlyStopping, MultiObjectiveTrainer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -267,9 +272,49 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     return bundle, float(lm.detach()), trace
 
 
+def _trainable_modules(system) -> dict[str, torch.nn.Module]:
+    return {
+        "encoder_projection": system.encoder.projection,
+        "compiler": system.compiler,
+        "router": system.router,
+    }
+
+
+def _epoch_order(length: int, seed: int, epoch: int) -> list[int]:
+    order = list(range(length))
+    random.Random(seed + epoch).shuffle(order)
+    return order
+
+
+def _resume_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if candidate.suffix == ".json" and candidate.is_file():
+        pointer = json.loads(candidate.read_text(encoding="utf-8"))
+        return candidate.parent / pointer["path"]
+    return candidate
+
+
+def _metric_value(report: dict, path: str) -> float:
+    current: object = report
+    for component in path.split("."):
+        if not isinstance(current, dict) or component not in current:
+            raise ValueError(f"missing early-stopping metric: {path}")
+        current = current[component]
+    return float("nan") if current is None else float(current)
+
+
 def run_training(
-    system, tokenizer, records: list[StructuredRecord], config: dict, output_dir: Path
+    system,
+    tokenizer,
+    records: list[StructuredRecord],
+    config: dict,
+    output_dir: Path,
+    *,
+    resume_from: str | Path | None = None,
+    tracker=None,
+    stop_after_optimizer_steps: int | None = None,
 ):
+    """Train at document granularity; all schedules advance on optimizer updates."""
     started = time.perf_counter()
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -277,141 +322,248 @@ def run_training(
     validation_records = [record for record in records if record.split == "validation"]
     if not train_records:
         raise ValueError("no training records after split filtering")
+    training_config = config["training"]
+    accumulation = int(training_config.get("gradient_accumulation_steps", 1))
+    if accumulation < 1:
+        raise ValueError("gradient_accumulation_steps must be at least 1")
+    max_epochs = int(training_config["max_epochs"])
+    updates_per_epoch = math.ceil(len(train_records) / accumulation)
+    total_steps = max(1, int(training_config.get("max_steps") or updates_per_epoch * max_epochs))
     trainable = [parameter for parameter in system.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(
         trainable,
-        lr=config["training"]["learning_rate"],
-        betas=tuple(config["training"]["betas"]),
-        weight_decay=config["training"]["weight_decay"],
-    )
-    total_steps = max(
-        1,
-        config["training"].get("max_steps")
-        or len(train_records) * config["training"]["max_epochs"],
+        lr=training_config["learning_rate"],
+        betas=tuple(training_config["betas"]),
+        weight_decay=training_config["weight_decay"],
     )
     scheduler = get_cosine_schedule_with_warmup(
-        optimizer, config["training"]["warmup_steps"], total_steps
+        optimizer, training_config["warmup_steps"], total_steps
     )
-    accumulation = config["training"].get("gradient_accumulation_steps", 1)
-    global_step = 0
-    best_validation = float("inf")
-    bad_epochs = 0
+    modules = _trainable_modules(system)
+    fingerprint = config_fingerprint(config)
+    state = TrainerState(config_fingerprint=fingerprint)
+    if resume_from is not None:
+        state = load_training_checkpoint(
+            modules,
+            _resume_path(resume_from),
+            optimizer=optimizer,
+            scheduler=scheduler,
+            expected_fingerprints={"config": fingerprint},
+            restore_rng=True,
+        )
+        if not state.exact_resume:
+            raise ValueError("training resume requires a checkpoint v2 exact-resume state")
+
+    patience = training_config.get("early_stopping_patience")
+    if validation_records and patience is None:
+        raise ValueError("PAPER_UNSPECIFIED early-stopping patience")
+    early_stopping = None
+    if validation_records:
+        best = None if not math.isfinite(state.best_validation) else state.best_validation
+        early_stopping = EarlyStopping(
+            mode=training_config.get("early_stopping_mode", "min"),
+            patience=int(patience),
+            min_delta=float(training_config.get("early_stopping_min_delta", 0.0)),
+            warmup_observations=int(
+                training_config.get("early_stopping_warmup_validations", 0)
+            ),
+            observations=state.validation_observations,
+            best=best,
+            bad_validations=state.bad_validations,
+            stopped=state.early_stopped,
+        )
+
+    output_dir = Path(output_dir)
+    checkpoint_dir = output_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    log_path = output_dir / "train_log.jsonl"
+    if resume_from is None:
+        log_path.unlink(missing_ok=True)
+    optimizer.zero_grad(set_to_none=True)
+    micro_step = state.micro_step
+    optimizer_step = state.optimizer_step
+    start_epoch = state.epoch
+    start_cursor = state.record_cursor
+    seed = int(training_config.get("seed", config.get("seed", 42)))
+    offset = int(training_config.get("initial_curriculum_step", 0))
+    early_stopping_metric = training_config.get(
+        "early_stopping_metric", "overall.losses.lm"
+    )
     last_trace = None
     last_validation_report = None
-    log_path = output_dir / "train_log.jsonl"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    optimizer.zero_grad(set_to_none=True)
-    for epoch in range(config["training"]["max_epochs"]):
+    stopped = state.early_stopped
+    window_traces: list[dict] = []
+
+    def save_state(epoch: int, cursor: int, *, best: bool = False) -> Path:
+        current = TrainerState(
+            epoch=epoch,
+            record_cursor=cursor,
+            micro_step=micro_step,
+            optimizer_step=optimizer_step,
+            curriculum_step=offset + optimizer_step,
+            sampler_state={"seed": seed, "epoch": epoch, "cursor": cursor},
+            best_validation=(
+                float("inf")
+                if early_stopping is None or early_stopping.best is None
+                else early_stopping.best
+            ),
+            bad_validations=0 if early_stopping is None else early_stopping.bad_validations,
+            validation_observations=(
+                0 if early_stopping is None else early_stopping.observations
+            ),
+            early_stopped=False if early_stopping is None else early_stopping.stopped,
+            config_fingerprint=fingerprint,
+            wandb_run_id=None if tracker is None else tracker.run_id,
+            wandb_mode="disabled" if tracker is None else tracker.mode,
+        )
+        destination = checkpoint_dir / f"step-{optimizer_step:08d}"
+        save_training_checkpoint(
+            modules,
+            destination,
+            state=current,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+        pointer = {"path": destination.name, "optimizer_step": optimizer_step}
+        atomic_write_json(checkpoint_dir / "last.json", pointer)
+        if best:
+            atomic_write_json(checkpoint_dir / "best.json", pointer)
+        if tracker is not None:
+            tracker.log_checkpoint(destination)
+        return destination
+
+    for epoch in range(start_epoch, max_epochs):
         system.train()
-        # Keep the base model frozen and deterministic while trainable heads remain in train mode.
         system.base_model.eval()
-        for record in train_records:
+        order = _epoch_order(len(train_records), seed, epoch)
+        cursor_begin = start_cursor if epoch == start_epoch else 0
+        pending = 0
+        for cursor in range(cursor_begin, len(order)):
+            record = train_records[order[cursor]]
             bank = _memory(system, tokenizer, record, config)
             record_totals = []
-            record_lm = []
             record_traces = []
             for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
-                curriculum_step = config["training"].get("initial_curriculum_step", 0) + global_step
-                bundle, lm_value, trace = _one_question(
+                curriculum_step = offset + optimizer_step
+                bundle, _lm_value, trace = _one_question(
                     system, tokenizer, record, qa, bank, config, curriculum_step
                 )
                 record_totals.append(bundle.total)
-                record_lm.append(lm_value)
                 record_traces.append(trace)
                 last_trace = trace
             if not record_totals:
                 continue
-            record_total = torch.stack(record_totals).mean()
-            (record_total / accumulation).backward()
-            if (global_step + 1) % accumulation == 0:
-                torch.nn.utils.clip_grad_norm_(trainable, config["training"]["gradient_clip"])
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad(set_to_none=True)
-            global_step += 1
-            validation_every = config["training"].get("validation_every_steps")
-            if validation_records and validation_every and global_step % validation_every == 0:
-                curriculum_step = (
-                    config["training"].get("initial_curriculum_step", 0) + global_step
-                )
-                last_validation_report = _validation_report(
-                    system, tokenizer, validation_records, config, curriculum_step
-                )
-                system.train()
-                system.base_model.eval()
-            with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps(
-                        {
-                            "epoch": epoch,
-                            "step": global_step,
-                            "curriculum_step": config["training"].get(
-                                "initial_curriculum_step", 0
-                            )
-                            + global_step
-                            - 1,
-                            "train": _split_trace_report(record_traces),
-                            "validation": last_validation_report,
-                        }
-                    )
-                    + "\n"
-                )
-            max_steps = config["training"].get("max_steps")
-            if max_steps is not None and global_step >= max_steps:
-                break
+            (torch.stack(record_totals).mean() / accumulation).backward()
+            micro_step += 1
+            pending += 1
+            window_traces.extend(record_traces)
+            at_epoch_end = cursor + 1 == len(order)
+            if pending < accumulation and not at_epoch_end:
+                continue
 
-        if global_step % accumulation != 0:
-            torch.nn.utils.clip_grad_norm_(trainable, config["training"]["gradient_clip"])
+            if at_epoch_end and pending < accumulation:
+                correction = accumulation / pending
+                for parameter in trainable:
+                    if parameter.grad is not None:
+                        parameter.grad.mul_(correction)
+            gradient_norm = torch.nn.utils.clip_grad_norm_(
+                trainable, training_config["gradient_clip"]
+            )
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
-
-        curriculum_step = config["training"].get("initial_curriculum_step", 0) + global_step
-        if last_validation_report is None or not config["training"].get(
-            "validation_every_steps"
-        ):
-            last_validation_report = _validation_report(
-                system, tokenizer, validation_records, config, curriculum_step
+            pending = 0
+            optimizer_step += 1
+            next_epoch = epoch + 1 if at_epoch_end else epoch
+            next_cursor = 0 if at_epoch_end else cursor + 1
+            validation_every = training_config.get("validation_every_steps")
+            validation_due = bool(
+                validation_records
+                and ((validation_every and optimizer_step % validation_every == 0) or at_epoch_end)
             )
-        validation_lm = last_validation_report["overall"].get("losses", {}).get("lm")
-        validation_lm = float("nan") if validation_lm is None else validation_lm
-        save_checkpoint(
-            {
-                "encoder_projection": system.encoder.projection,
-                "compiler": system.compiler,
-                "router": system.router,
-            },
-            output_dir / "last.pt",
-            optimizer,
-            global_step,
-        )
-        if validation_records:
-            if validation_lm < best_validation:
-                best_validation = validation_lm
-                bad_epochs = 0
-                save_checkpoint(
-                    {
-                        "encoder_projection": system.encoder.projection,
-                        "compiler": system.compiler,
-                        "router": system.router,
-                    },
-                    output_dir / "best.pt",
-                    optimizer,
-                    global_step,
+            improved = False
+            if validation_due:
+                last_validation_report = _validation_report(
+                    system, tokenizer, validation_records, config, offset + optimizer_step
                 )
-            else:
-                bad_epochs += 1
-                patience = config["training"].get("early_stopping_patience")
-                if patience is None:
-                    raise ValueError("PAPER_UNSPECIFIED early-stopping patience")
-                if bad_epochs >= patience:
-                    LOGGER.info("early stopping at epoch %s", epoch)
-                    break
-        max_steps = config["training"].get("max_steps")
-        if max_steps is not None and global_step >= max_steps:
+                value = _metric_value(last_validation_report, early_stopping_metric)
+                observation = early_stopping.observe(value)
+                improved = observation.improved
+                stopped = observation.should_stop
+                if observation.nonfinite:
+                    LOGGER.warning("non-finite early-stopping metric at optimizer step %s", optimizer_step)
+                system.train()
+                system.base_model.eval()
+
+            event = {
+                "epoch": epoch,
+                "micro_step": micro_step,
+                "optimizer_step": optimizer_step,
+                "step": optimizer_step,
+                "curriculum_step": offset + optimizer_step,
+                "learning_rate": float(scheduler.get_last_lr()[0]),
+                "gradient_norm": float(gradient_norm),
+                "elapsed_seconds": time.perf_counter() - started,
+                "cuda_allocated_bytes": (
+                    torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+                ),
+                "cuda_reserved_bytes": (
+                    torch.cuda.memory_reserved() if torch.cuda.is_available() else 0
+                ),
+                "train": _split_trace_report(window_traces),
+                "validation": last_validation_report if validation_due else None,
+            }
+            with log_path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(event) + "\n")
+            if tracker is not None:
+                tracker.log_metrics(
+                    {
+                        "train/total_loss": event["train"]["overall"].get("total_loss"),
+                        "train/gradient_norm": event["gradient_norm"],
+                        "train/learning_rate": event["learning_rate"],
+                    },
+                    step=optimizer_step,
+                )
+            window_traces = []
+            max_steps_reached = optimizer_step >= total_steps
+            requested_stop = (
+                stop_after_optimizer_steps is not None
+                and optimizer_step >= stop_after_optimizer_steps
+            )
+            checkpoint_every = int(training_config.get("checkpoint_every_steps", 1000))
+            if (
+                improved
+                or validation_due
+                or at_epoch_end
+                or max_steps_reached
+                or requested_stop
+                or optimizer_step % checkpoint_every == 0
+            ):
+                save_state(next_epoch, next_cursor, best=improved)
+            if stopped or max_steps_reached or requested_stop:
+                break
+        start_cursor = 0
+        if stopped or optimizer_step >= total_steps or (
+            stop_after_optimizer_steps is not None
+            and optimizer_step >= stop_after_optimizer_steps
+        ):
             break
+
+    if optimizer_step and not (checkpoint_dir / "last.json").exists():
+        save_state(min(max_epochs, start_epoch + 1), 0)
+    best_validation = (
+        float("inf")
+        if early_stopping is None or early_stopping.best is None
+        else early_stopping.best
+    )
     return {
-        "steps": global_step,
+        "steps": optimizer_step,
+        "micro_steps": micro_step,
+        "optimizer_steps": optimizer_step,
+        "curriculum_step": offset + optimizer_step,
+        "early_stopped": stopped,
+        "early_stopping_metric": early_stopping_metric,
+        "best_validation_metric": best_validation,
         "best_validation_lm": best_validation,
         "last_trace": last_trace,
         "last_validation": last_validation_report,
