@@ -9,4 +9,6 @@ outputs/*
 data/*
 checkpoints/
 wandb/
+.worktrees/
+.superpowers/
 
