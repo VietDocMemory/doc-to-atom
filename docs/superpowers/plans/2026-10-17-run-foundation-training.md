@@ -67,13 +67,13 @@
 - Test: `tests/test_losses_curriculum_checkpoint.py`
 - Test: `tests/test_resume_equivalence.py`
 
-- [ ] Write failing round-trip tests for trainable modules, optimizer, scheduler, scaler, epoch, record cursor, micro/optimizer/curriculum steps, early-stop state, Python/NumPy/CPU/CUDA RNG, sampler state, hashes, and W&B run ID.
-- [ ] Define a versioned `TrainerState`; capture/restore all RNG sources and validate checkpoint compatibility.
-- [ ] Save into a temporary sibling directory, fsync metadata where supported, then atomically rename and write `COMPLETE`.
-- [ ] Retain an explicit legacy loader for current `.pt` smoke checkpoints; never silently treat legacy state as fully resumable.
-- [ ] Add interrupted-vs-uninterrupted deterministic equivalence test on a tiny CPU model.
-- [ ] Run `py -m uv run pytest tests/test_losses_curriculum_checkpoint.py tests/test_resume_equivalence.py -q`.
-- [ ] Commit: `feat(training): add complete atomic resumable checkpoints`.
+- [x] Write failing round-trip tests for trainable modules, optimizer, scheduler, scaler, epoch, record cursor, micro/optimizer/curriculum steps, early-stop state, Python/NumPy/CPU/CUDA RNG, sampler state, hashes, and W&B run ID.
+- [x] Define a versioned `TrainerState`; capture/restore all RNG sources and validate checkpoint compatibility.
+- [x] Save into a temporary sibling directory, fsync metadata where supported, then atomically rename and write `COMMITTED`.
+- [x] Retain an explicit legacy loader for current `.pt` smoke checkpoints; never silently treat legacy state as fully resumable.
+- [x] Add interrupted-vs-uninterrupted deterministic equivalence test on a tiny CPU model.
+- [x] Run `py -m uv run pytest tests/test_losses_curriculum_checkpoint.py tests/test_resume_equivalence.py -q`.
+- [x] Commit: `feat(training): add complete atomic resumable checkpoints`.
 
 ## Task 4: Correct training step semantics and early stopping
 
