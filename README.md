@@ -43,6 +43,11 @@ Credentials are loaded from the ignored `.env`. MiniMax uses `MINIMAX_API_KEY`,
 
 See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
 
+W&B tracking is local-first. Set `runtime.wandb_mode: offline` (the default in the
+Molab reconstruction and local diagnostic profiles) to avoid authentication and
+network access during a run; artifacts are written under the run directory and can
+be synchronized later. Use `disabled` only when no W&B run directory is wanted.
+
 The upstream repository linked by the paper was audited at commit
 `0848bda2aaef69b375436e24a30c8469a3f0560c`; it contained only a two-line
 README, so no upstream implementation or checkpoint was available to reuse.

@@ -51,12 +51,12 @@
 - Modify: `pyproject.toml`
 - Test: `tests/test_run_context.py`
 
-- [ ] Write failing tests for deterministic manifest fields, output directory layout, redaction, W&B disabled/offline modes, and stable run IDs on resume.
-- [ ] Implement `RunContext.create(...)`, atomic JSON/YAML writes, environment/package/git capture, and structured JSONL events.
-- [ ] Implement `RunTracker` with `online -> offline` fallback and a no-op backend; log config, manifest, metrics, files, and checkpoint artifacts through one interface.
-- [ ] Add bounded `wandb` and `safetensors` dependencies and document network-free initialization.
-- [ ] Run `py -m uv run pytest tests/test_run_context.py -q`.
-- [ ] Commit: `feat(runtime): add reproducible run and wandb artifact contract`.
+- [x] Write failing tests for deterministic manifest fields, output directory layout, redaction, W&B disabled/offline modes, and stable run IDs on resume.
+- [x] Implement `RunContext.create(...)`, atomic JSON/YAML writes, environment/package/git capture, and structured JSONL events.
+- [x] Implement `RunTracker` with `online -> offline` fallback and a no-op backend; log config, manifest, metrics, files, and checkpoint artifacts through one interface.
+- [x] Add bounded `wandb` and `safetensors` dependencies and document network-free initialization.
+- [x] Run `py -m uv run pytest tests/test_run_context.py -q`.
+- [x] Commit: `feat(runtime): add reproducible run and wandb artifact contract`.
 
 ## Task 3: Replace checkpoint v1 with atomic checkpoint v2
 
