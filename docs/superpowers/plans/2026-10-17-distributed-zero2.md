@@ -27,10 +27,10 @@
 
 **Files:** Create `src/doc_to_atom/training/distributed.py`; create `tests/test_distributed_sampler.py`.
 
-- [ ] RED tests for deterministic epoch permutations, equal rank lengths, full accumulation windows, explicit padding inventory, disjoint non-padding samples, cursor resume, and topology mismatch.
-- [ ] Implement `DistributedEpochPlan` from seed/epoch/world-size/accumulation and serialize its contract into trainer state.
-- [ ] Verify `py -m uv run pytest tests/test_distributed_sampler.py -q`.
-- [ ] Commit `feat(training): add deterministic distributed epoch plans`.
+- [x] RED tests for deterministic epoch permutations, equal rank lengths, full accumulation windows, explicit padding inventory, disjoint non-padding samples, cursor resume, and topology mismatch.
+- [x] Implement `DistributedEpochPlan` from seed/epoch/world-size/accumulation and serialize its contract for `TrainerState.sampler_state`.
+- [x] Verify `py -m uv run pytest tests/test_distributed_sampler.py -q`.
+- [x] Commit `feat(training): add deterministic distributed epoch plans`.
 
 ## Task 2: Put every trainable forward behind the wrapped model
 
