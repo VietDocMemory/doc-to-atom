@@ -27,6 +27,10 @@ from doc_to_atom.losses.objectives import (
 from doc_to_atom.runtime.run import atomic_write_json
 from doc_to_atom.training.checkpoint import load_training_checkpoint, save_training_checkpoint
 from doc_to_atom.training.curriculum import stage_for_step
+from doc_to_atom.training.distributed import (
+    DistributedPreflightError,
+    LocalTrainingRuntime,
+)
 from doc_to_atom.training.state import TrainerState
 from doc_to_atom.training.trainer import EarlyStopping, MultiObjectiveTrainer
 
@@ -326,6 +330,7 @@ def run_training(
     resume_from: str | Path | None = None,
     tracker=None,
     stop_after_optimizer_steps: int | None = None,
+    runtime=None,
 ):
     """Train at document granularity; all schedules advance on optimizer updates."""
     started = time.perf_counter()
@@ -339,6 +344,16 @@ def run_training(
     accumulation = int(training_config.get("gradient_accumulation_steps", 1))
     if accumulation < 1:
         raise ValueError("gradient_accumulation_steps must be at least 1")
+    runtime = runtime or LocalTrainingRuntime(accumulation)
+    if runtime.accumulation_steps != accumulation:
+        raise DistributedPreflightError(
+            "runtime and config gradient_accumulation_steps differ"
+        )
+    if runtime.is_distributed:
+        raise DistributedPreflightError(
+            "distributed execution remains blocked until atomic all-rank checkpoint "
+            "publication and resume are installed"
+        )
     max_epochs = int(training_config["max_epochs"])
     updates_per_epoch = math.ceil(len(train_records) / accumulation)
     total_steps = max(1, int(training_config.get("max_steps") or updates_per_epoch * max_epochs))
@@ -352,7 +367,9 @@ def run_training(
     scheduler = get_cosine_schedule_with_warmup(
         optimizer, training_config["warmup_steps"], total_steps
     )
-    modules = _trainable_modules(system)
+    system, optimizer, scheduler = runtime.prepare(system, optimizer, scheduler)
+    raw_system = runtime.unwrap_model(system)
+    modules = _trainable_modules(raw_system)
     fingerprint = config_fingerprint(config)
     state = TrainerState(config_fingerprint=fingerprint)
     if resume_from is not None:
@@ -447,44 +464,42 @@ def run_training(
 
     for epoch in range(start_epoch, max_epochs):
         system.train()
-        system.base_model.eval()
+        raw_system.base_model.eval()
         order = _epoch_order(len(train_records), seed, epoch)
         cursor_begin = start_cursor if epoch == start_epoch else 0
         pending = 0
         for cursor in range(cursor_begin, len(order)):
             record = train_records[order[cursor]]
-            bank = _memory(system, tokenizer, record, config)
-            record_totals = []
-            record_traces = []
-            for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
-                curriculum_step = offset + optimizer_step
-                bundle, _lm_value, trace = _one_question(
-                    system, tokenizer, record, qa, bank, config, curriculum_step
-                )
-                record_totals.append(bundle.total)
-                record_traces.append(trace)
-                last_trace = trace
-            if not record_totals:
-                continue
-            (torch.stack(record_totals).mean() / accumulation).backward()
-            micro_step += 1
-            pending += 1
-            window_traces.extend(record_traces)
             at_epoch_end = cursor + 1 == len(order)
-            if pending < accumulation and not at_epoch_end:
+            force_sync = at_epoch_end and pending + 1 < accumulation
+            with runtime.accumulate(system, force_sync=force_sync):
+                bank = _memory(system, tokenizer, record, config)
+                record_totals = []
+                record_traces = []
+                for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
+                    curriculum_step = offset + optimizer_step
+                    bundle, _lm_value, trace = _one_question(
+                        system, tokenizer, record, qa, bank, config, curriculum_step
+                    )
+                    record_totals.append(bundle.total)
+                    record_traces.append(trace)
+                    last_trace = trace
+                if not record_totals:
+                    continue
+                runtime.backward(torch.stack(record_totals).mean())
+                micro_step += 1
+                pending += 1
+                window_traces.extend(record_traces)
+                step_result = runtime.finish_micro_step(
+                    optimizer,
+                    scheduler,
+                    trainable,
+                    max_grad_norm=training_config["gradient_clip"],
+                    partial_window_scale=(accumulation / pending if force_sync else 1.0),
+                )
+            if not step_result.did_update:
                 continue
-
-            if at_epoch_end and pending < accumulation:
-                correction = accumulation / pending
-                for parameter in trainable:
-                    if parameter.grad is not None:
-                        parameter.grad.mul_(correction)
-            gradient_norm = torch.nn.utils.clip_grad_norm_(
-                trainable, training_config["gradient_clip"]
-            )
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad(set_to_none=True)
+            gradient_norm = step_result.gradient_norm
             pending = 0
             optimizer_step += 1
             next_epoch = epoch + 1 if at_epoch_end else epoch
@@ -506,7 +521,7 @@ def run_training(
                 if observation.nonfinite:
                     LOGGER.warning("non-finite early-stopping metric at optimizer step %s", optimizer_step)
                 system.train()
-                system.base_model.eval()
+                raw_system.base_model.eval()
 
             event = {
                 "epoch": epoch,
