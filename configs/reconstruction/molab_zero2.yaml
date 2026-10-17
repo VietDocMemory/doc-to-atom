@@ -1,0 +1,55 @@
+_base_: ../paper_like/base.yaml
+profile:
+  name: gemma-reconstruction-molab-zero2
+  family: reconstruction
+assumptions:
+  - id: A-LOSS-WEIGHTS-001
+    category: training
+    description: Multi-objective loss coefficients are not published.
+    chosen_value: {lm: 1.0, distill: 1.0, route: 1.0, rerank: 1.0, irrelevant: 0.1, protect: 0.001, sparse: 0.01, composition: 0.1, conflict: 0.1, confidence: 0.1}
+    rationale: Neutral unit weights for primary losses and conservative regularizer weights provide a runnable starting point.
+    affected_metrics: [answer_f1, rouge_l, recall_at_k, refusal_f1]
+    source_status: paper_unspecified
+  - id: A-SPARSE-RHO-001
+    category: training
+    description: Sparse gate target density rho is not published.
+    chosen_value: 0.25
+    rationale: Retain one quarter of gate mass as an explicit reconstruction starting point.
+    affected_metrics: [adapter_sparsity, answer_f1]
+    source_status: paper_unspecified
+  - id: A-EARLY-STOP-001
+    category: training
+    description: Early-stopping patience is not published.
+    chosen_value: 5
+    rationale: Permit multiple validation observations before stopping a full run.
+    affected_metrics: [validation_loss]
+    source_status: paper_unspecified
+deviations: []
+runtime:
+  profile: molab_zero2
+  device: auto
+  distributed_backend: deepspeed_zero2
+  gradient_checkpointing: false
+  flash_attention_2: auto
+  wandb_mode: offline
+training:
+  effective_global_batch: 128
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.0
+  sparse_target_density: 0.25
+  irrelevant_stage3_multiplier: 2.0
+  sparse_stage4_multiplier: 2.0
+  loss_weights:
+    lm: 1.0
+    distill: 1.0
+    route: 1.0
+    rerank: 1.0
+    irrelevant: 0.1
+    protect: 0.001
+    sparse: 0.01
+    composition: 0.1
+    conflict: 0.1
+    confidence: 0.1
+

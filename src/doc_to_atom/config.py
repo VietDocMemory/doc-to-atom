@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,24 @@ import yaml
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
+
+CONFIG_FAMILIES = frozenset({"paper_like", "reconstruction", "experiments", "runtime"})
+ASSUMPTION_FIELDS = frozenset(
+    {
+        "id",
+        "category",
+        "description",
+        "chosen_value",
+        "rationale",
+        "affected_metrics",
+        "source_status",
+    }
+)
+DEVIATION_FIELDS = frozenset({"id", "description", "rationale", "affected_metrics"})
+
+
+class ConfigError(ValueError):
+    """Raised when configuration provenance or invariants are invalid."""
 
 
 def load_project_env() -> None:
@@ -28,13 +47,92 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def load_config(path: str | Path) -> dict[str, Any]:
+def _load_config(path: Path, ancestry: tuple[Path, ...]) -> dict[str, Any]:
+    path = path.resolve()
+    if path in ancestry:
+        chain = " -> ".join(str(item) for item in (*ancestry, path))
+        raise ConfigError(f"configuration inheritance cycle: {chain}")
+    if not path.is_file():
+        raise ConfigError(f"configuration file does not exist: {path}")
     path = Path(path).resolve()
     with path.open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle) or {}
+    if not isinstance(config, dict):
+        raise ConfigError(f"configuration root must be a mapping: {path}")
     if base_name := config.get("_base_"):
-        base = load_config(path.parent / base_name)
+        if not isinstance(base_name, str):
+            raise ConfigError(f"_base_ must be a path string: {path}")
+        base = _load_config(path.parent / base_name, (*ancestry, path))
         config = _merge(base, config)
+    return config
+
+
+def load_config(path: str | Path) -> dict[str, Any]:
+    """Load a recursively inherited YAML config without schema enforcement."""
+    return _load_config(Path(path), ())
+
+
+def canonical_config_json(config: dict[str, Any]) -> str:
+    """Serialize a resolved config deterministically for hashing and snapshots."""
+    return json.dumps(
+        config,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def config_fingerprint(config: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_config_json(config).encode("utf-8")).hexdigest()
+
+
+def _validate_metadata_entries(
+    entries: Any, *, kind: str, required_fields: frozenset[str]
+) -> None:
+    if not isinstance(entries, list):
+        raise ConfigError(f"{kind}s must be a list")
+    seen: set[str] = set()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{kind}[{index}] must be a mapping")
+        entry_id = str(entry.get("id", f"at index {index}"))
+        missing = sorted(required_fields - entry.keys())
+        if missing:
+            raise ConfigError(f"{kind} {entry_id} missing fields: {', '.join(missing)}")
+        if entry_id in seen:
+            raise ConfigError(f"duplicate {kind} id: {entry_id}")
+        seen.add(entry_id)
+
+
+def validate_config(config: dict[str, Any], *, require_runnable: bool = False) -> None:
+    """Validate classification/provenance and optionally all runnable training values."""
+    profile = config.get("profile")
+    if not isinstance(profile, dict) or not profile.get("name"):
+        raise ConfigError("profile.name is required")
+    family = profile.get("family")
+    if family not in CONFIG_FAMILIES:
+        raise ConfigError(
+            f"profile.family must be one of {sorted(CONFIG_FAMILIES)}, got {family!r}"
+        )
+    _validate_metadata_entries(
+        config.get("assumptions", []), kind="assumption", required_fields=ASSUMPTION_FIELDS
+    )
+    _validate_metadata_entries(
+        config.get("deviations", []), kind="deviation", required_fields=DEVIATION_FIELDS
+    )
+    if require_runnable:
+        try:
+            require_disclosed_training_values(config)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ConfigError(str(exc)) from exc
+
+
+def load_and_resolve_config(
+    path: str | Path, *, require_runnable: bool = False
+) -> dict[str, Any]:
+    config = load_config(path)
+    validate_config(config, require_runnable=require_runnable)
     return config
 
 

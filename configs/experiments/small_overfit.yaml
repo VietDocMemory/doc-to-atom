@@ -1,0 +1,27 @@
+_base_: ../reconstruction/molab_zero2.yaml
+profile:
+  name: small-overfit-diagnostic
+  family: experiments
+deviations:
+  - id: D-SMALL-OVERFIT-001
+    description: Bound the run and start at curriculum stage two for an overfit diagnostic.
+    rationale: Exercise routing and resume behavior without a full training run.
+    affected_metrics: [training_loss, routing_entropy]
+runtime:
+  profile: local_single_gpu
+  distributed_backend: none
+  wandb_mode: offline
+training:
+  effective_global_batch: 1
+  micro_batch_size: 1
+  gradient_accumulation_steps: 1
+  max_epochs: 2
+  max_steps: 5
+  warmup_steps: 0
+  validation_every_steps: 1
+  initial_curriculum_step: 2000
+data:
+  max_questions_per_sample: 2
+evaluation:
+  routing_recall_k: 4
+

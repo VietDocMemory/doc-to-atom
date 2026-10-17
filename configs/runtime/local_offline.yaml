@@ -1,0 +1,13 @@
+profile:
+  name: local-windows-offline
+  family: runtime
+assumptions: []
+deviations: []
+runtime:
+  profile: local_single_gpu
+  device: auto
+  distributed_backend: none
+  gradient_checkpointing: false
+  flash_attention_2: auto
+  wandb_mode: offline
+

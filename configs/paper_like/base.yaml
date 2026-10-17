@@ -1,0 +1,7 @@
+_base_: ../gemma_paper.yaml
+profile:
+  name: gemma-paper-like
+  family: paper_like
+assumptions: []
+deviations: []
+

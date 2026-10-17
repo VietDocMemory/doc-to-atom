@@ -35,12 +35,12 @@
 - Modify: `src/doc_to_atom/config.py`
 - Test: `tests/test_config.py`
 
-- [ ] Write failing tests for recursive base resolution, cycle detection, missing disclosed values, config family metadata, and stable config hashing.
-- [ ] Add `load_and_resolve_config`, schema/invariant validation, canonical serialization, and SHA-256 helpers while retaining `load_config` compatibility.
-- [ ] Encode every unpublished value under `assumptions`; encode every deviation under `deviations`.
-- [ ] Add Molab ZeRO-2 reconstruction config with gradient checkpointing and Micro-KV explicitly false.
-- [ ] Run `py -m uv run pytest tests/test_config.py -q`.
-- [ ] Commit: `feat(config): separate paper assumptions experiments and runtime`.
+- [x] Write failing tests for recursive base resolution, cycle detection, missing disclosed values, config family metadata, and stable config hashing.
+- [x] Add `load_and_resolve_config`, schema/invariant validation, canonical serialization, and SHA-256 helpers while retaining `load_config` compatibility.
+- [x] Encode every unpublished value under `assumptions`; encode every deviation under `deviations`.
+- [x] Add Molab ZeRO-2 reconstruction config with gradient checkpointing and Micro-KV explicitly false.
+- [x] Run `py -m uv run pytest tests/test_config.py -q`.
+- [x] Commit: `feat(config): separate paper assumptions experiments and runtime`.
 
 ## Task 2: Introduce the run artifact and tracking contract
 
