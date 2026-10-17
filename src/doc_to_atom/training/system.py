@@ -42,6 +42,27 @@ class TeacherStudentSystem(nn.Module):
         self.injector = injector
         freeze_base_model(self.base_model)
 
+    def forward(self, operation: str, **kwargs):
+        """Dispatch all differentiable paths through the distributed wrapper.
+
+        DDP and DeepSpeed only install their synchronization hooks around
+        ``Module.__call__``. Keeping these operations behind one forward entry
+        point prevents trainable submodules from silently bypassing those hooks.
+        """
+        operations = {
+            "build_memory": self.build_memory,
+            "teacher": self.teacher_forward,
+            "student": self.student_forward,
+            "forced_gold": self.forced_gold_forward,
+        }
+        try:
+            implementation = operations[operation]
+        except KeyError as error:
+            raise ValueError(
+                f"unknown TeacherStudentSystem operation: {operation!r}"
+            ) from error
+        return implementation(**kwargs)
+
     def build_memory(self, atom_inputs: dict[str, torch.Tensor], atoms: list[Atom]) -> MemoryBank:
         embeddings = self.encoder.encode_atoms(**atom_inputs)
         compiled = self.compiler(embeddings)
@@ -65,3 +86,14 @@ class TeacherStudentSystem(nn.Module):
         with self.injector.activate(composed):
             logits = self.base_model(**query_inputs, use_cache=False).logits
         return StudentOutput(logits=logits, router=routed, composed=composed)
+
+    def forced_gold_forward(
+        self,
+        query_inputs: dict[str, torch.Tensor],
+        bank: MemoryBank,
+        selected_indices: torch.Tensor,
+        routing_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        composed = self.composer(bank, selected_indices, routing_weights)
+        with self.injector.activate(composed):
+            return self.base_model(**query_inputs, use_cache=False).logits

@@ -1,4 +1,5 @@
 import torch
+import pytest
 from conftest import ToyLM
 from torch.nn import functional as F
 
@@ -94,3 +95,62 @@ def test_teacher_student_forward():
     student = system.student_forward(query, query, "q", bank, top_k=2)
     assert teacher.shape == student.logits.shape
     assert student.router.selected_indices.numel() == 2
+
+
+def test_teacher_student_dispatches_every_trainable_operation():
+    model = ToyLM(depth=6)
+    targets = discover_target_shapes(
+        model, [2, 3, 4, 5], ["q_proj", "v_proj", "o_proj", "down_proj"]
+    )
+    system = TeacherStudentSystem(
+        model,
+        SharedAtomQueryEncoder(model, hidden_size=8, output_dim=16, num_layers=4),
+        AtomMemoryCompiler(targets, input_dim=16, latent_dim=16, key_dim=16, rank=2),
+        TwoStageRouter(embedding_dim=16, key_dim=16, stage1_top_k=32),
+        MemoryComposer(),
+        DynamicLoRAInjector(model, targets, rank=2, alpha=4),
+    )
+    atoms = [
+        Atom(
+            atom_id=f"a{i}",
+            semantic_type="fact_claim",
+            content=str(i),
+            source_span=str(i),
+            retrieval_text=str(i),
+            is_answer_bearing=True,
+            abstraction_level="evidence",
+            confidence=1,
+        )
+        for i in range(3)
+    ]
+    atom_inputs = {
+        "input_ids": torch.randint(0, 31, (3, 4)),
+        "attention_mask": torch.ones(3, 4, dtype=torch.long),
+    }
+    query = {
+        "input_ids": torch.randint(0, 31, (1, 4)),
+        "attention_mask": torch.ones(1, 4, dtype=torch.long),
+    }
+
+    bank = system(operation="build_memory", atom_inputs=atom_inputs, atoms=atoms)
+    teacher = system(operation="teacher", full_context_query_inputs=query)
+    student = system(
+        operation="student",
+        query_inputs=query,
+        query_embedding_inputs=query,
+        query_text="q",
+        bank=bank,
+        top_k=2,
+    )
+    forced = system(
+        operation="forced_gold",
+        query_inputs=query,
+        bank=bank,
+        selected_indices=torch.tensor([0, 1]),
+        routing_weights=torch.tensor([0.6, 0.4]),
+    )
+
+    assert teacher.shape == student.logits.shape == forced.shape
+    assert student.router.selected_indices.numel() == 2
+    with pytest.raises(ValueError, match="unknown TeacherStudentSystem operation"):
+        system(operation="not-real")

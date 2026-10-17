@@ -36,10 +36,10 @@
 
 **Files:** Modify `src/doc_to_atom/training/system.py`, `src/doc_to_atom/training/loop.py`; modify `tests/test_injection_system.py`.
 
-- [ ] RED tests for build-memory, teacher, student, and forced-gold dispatch through `TeacherStudentSystem.forward`.
-- [ ] Refactor loop calls so the prepared model wrapper observes all trainable computation; use the unwrapped model only for state access and frozen-base mode.
-- [ ] Verify local single-GPU behavior remains equivalent.
-- [ ] Commit `refactor(training): route trainable work through wrapped system`.
+- [x] RED tests for build-memory, teacher, student, and forced-gold dispatch through `TeacherStudentSystem.forward`.
+- [x] Refactor loop calls so the prepared model wrapper observes all trainable computation; use direct module access only for state and mode changes.
+- [x] Verify local single-GPU behavior remains equivalent.
+- [x] Commit `refactor(training): route trainable work through wrapped system`.
 
 ## Task 3: Give Accelerate optimizer and scheduler ownership
 

@@ -133,18 +133,18 @@ def _split_trace_report(traces: list[dict]) -> dict:
 
 
 def _memory(system, tokenizer, record: StructuredRecord, config: dict) -> MemoryBank:
-    device = _model_device(system.base_model)
+    device = _model_device(system)
     atom_inputs = _tokenize(
         tokenizer,
         [atom.content for atom in record.atoms],
         config["data"]["max_atom_tokens"],
         device,
     )
-    return system.build_memory(atom_inputs, record.atoms)
+    return system(operation="build_memory", atom_inputs=atom_inputs, atoms=record.atoms)
 
 
 def _one_question(system, tokenizer, record, qa, bank, config, step: int):
-    device = _model_device(system.base_model)
+    device = _model_device(system)
     stage = stage_for_step(step)
     answer = "unanswerable" if qa.is_irrelevant else _answer_text(qa.answer)
     if not answer:
@@ -164,8 +164,17 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         device,
     )
     query_inputs = _tokenize(tokenizer, [qa.question], 256, device)
-    teacher_logits = system.teacher_forward(teacher_inputs)
-    student = system.student_forward(student_inputs, query_inputs, qa.question, bank, stage.top_k)
+    teacher_logits = system(
+        operation="teacher", full_context_query_inputs=teacher_inputs
+    )
+    student = system(
+        operation="student",
+        query_inputs=student_inputs,
+        query_embedding_inputs=query_inputs,
+        query_text=qa.question,
+        bank=bank,
+        top_k=stage.top_k,
+    )
     student_answer = _answer_logits(student.logits, answer_count)
     teacher_answer = _answer_logits(teacher_logits, min(teacher_count, answer_count))
     common = min(student_answer.shape[1], teacher_answer.shape[1])
@@ -197,9 +206,13 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
             [index for index, atom_id in enumerate(all_ids) if atom_id in relevant], device=device
         )
         forced_weights = F.softmax(student.router.all_stage1_scores[forced_indices], dim=0)
-        forced = system.composer(bank, forced_indices, forced_weights)
-        with system.injector.activate(forced):
-            forced_logits = system.base_model(**student_inputs, use_cache=False).logits
+        forced_logits = system(
+            operation="forced_gold",
+            query_inputs=student_inputs,
+            bank=bank,
+            selected_indices=forced_indices,
+            routing_weights=forced_weights,
+        )
         composition = composition_consistency_loss(
             student_answer, _answer_logits(forced_logits, answer_count)[:, -common:]
         )
