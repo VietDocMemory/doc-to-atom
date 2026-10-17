@@ -104,11 +104,11 @@
 - Modify: `README.md`
 - Test: `tests/test_training_cli.py`
 
-- [ ] Write CLI tests for fresh run, `--resume PATH`, `--resume latest`, incompatible checkpoint rejection, `--wandb-mode offline`, and config snapshot creation.
-- [ ] Wire `RunContext`, tracker, checkpoint manager, and resolved config into the CLI.
-- [ ] Turn gradient checkpointing into an actionable fail-fast error that explains the ContextVar/recomputation limitation; retain Micro-KV `NotImplementedError` with documentation pointer.
+- [x] Write CLI tests for fresh run, `--resume PATH`, `--resume latest`, incompatible checkpoint rejection, `--wandb-mode offline`, and config snapshot creation.
+- [x] Wire `RunContext`, tracker, checkpoint manager, and resolved config into the CLI.
+- [x] Turn gradient checkpointing into an actionable fail-fast error that explains the ContextVar/recomputation limitation; retain Micro-KV `NotImplementedError` with documentation pointer.
 - [ ] Add Linux/Molab Accelerate + DeepSpeed launch script that validates paths, GPU visibility, writable output, and offline W&B directories before starting.
-- [ ] Run `py -m uv run pytest tests/test_training_cli.py -q` and `py -m uv run pytest -q`.
+- [x] Run `py -m uv run pytest tests/test_training_cli.py -q` and `py -m uv run pytest -q`.
 - [ ] Commit: `feat(training): expose fresh and resumable Molab CLI`.
 
 ## Acceptance Commands

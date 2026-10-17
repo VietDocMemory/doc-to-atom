@@ -1,0 +1,9 @@
+_base_: molab_zero2.yaml
+profile:
+  name: gemma-reconstruction-molab-single-gpu
+  family: reconstruction
+runtime:
+  profile: molab_single_gpu
+  distributed_backend: none
+  gradient_checkpointing: false
+

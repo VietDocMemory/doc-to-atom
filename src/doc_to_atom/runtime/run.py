@@ -66,7 +66,7 @@ def redact_secrets(value: Any) -> Any:
     return value
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
@@ -81,13 +81,13 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 def atomic_write_json(path: Path, value: Any) -> None:
-    _atomic_write_text(
+    atomic_write_text(
         path, json.dumps(redact_secrets(value), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     )
 
 
 def atomic_write_yaml(path: Path, value: Any) -> None:
-    _atomic_write_text(
+    atomic_write_text(
         path, yaml.safe_dump(redact_secrets(value), allow_unicode=True, sort_keys=True)
     )
 

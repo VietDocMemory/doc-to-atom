@@ -20,7 +20,34 @@ from doc_to_atom.training.system import TeacherStudentSystem
 LOGGER = logging.getLogger(__name__)
 
 
+class UnsupportedRuntimeFeature(RuntimeError):
+    """Raised before model allocation when a requested feature is not safe."""
+
+
+def validate_runtime_features(config: dict) -> None:
+    runtime = config.get("runtime", {})
+    backend = runtime.get("distributed_backend", "none")
+    if backend not in {None, "none"}:
+        raise UnsupportedRuntimeFeature(
+            f"distributed backend {backend!r} is blocked: distributed checkpoint publication, "
+            "sampler parity, and optimizer-state resume are not wired through Accelerate yet"
+        )
+    if runtime.get("gradient_checkpointing"):
+        raise UnsupportedRuntimeFeature(
+            "gradient checkpointing is unsafe with hook-scoped dynamic LoRA: backward "
+            "recomputation occurs after the adapter ContextVar has been cleared. Keep "
+            "runtime.gradient_checkpointing=false until recomputation equivalence is tested."
+        )
+    micro_kv = config.get("compiler", {}).get("micro_kv", {})
+    if micro_kv.get("enabled"):
+        raise NotImplementedError(
+            "micro-KV injection remains PAPER_UNSPECIFIED (slot count, head mapping, position, "
+            "injection site, and initialization); refusing to enable an invented architecture"
+        )
+
+
 def build_system(config: dict, enable_reranker: bool = True):
+    validate_runtime_features(config)
     model_cfg = config["model"]
     runtime = config.get("runtime", {})
     requested_device = runtime.get("device", "auto")
@@ -46,11 +73,6 @@ def build_system(config: dict, enable_reranker: bool = True):
             raise
     tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"])
     freeze_base_model(model)
-    if runtime.get("gradient_checkpointing"):
-        LOGGER.warning(
-            "gradient checkpointing disabled: dynamic adapter hooks are scoped to the forward "
-            "context and would be absent during checkpoint recomputation"
-        )
     targets = discover_target_shapes(
         model, model_cfg["memory_layer_indices"], model_cfg["target_modules"]
     )
@@ -62,11 +84,6 @@ def build_system(config: dict, enable_reranker: bool = True):
     )
     compiler_cfg = config["compiler"]
     micro_kv = compiler_cfg["micro_kv"]
-    if micro_kv["enabled"]:
-        raise NotImplementedError(
-            "micro-KV is an optional paper interface, but its shape, positional semantics, and "
-            "injection procedure are PAPER_UNSPECIFIED; refusing to invent a main-setting implementation"
-        )
     compiler = AtomMemoryCompiler(
         targets,
         input_dim=config["encoder"]["output_dim"],
