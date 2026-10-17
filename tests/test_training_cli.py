@@ -53,13 +53,22 @@ def test_factory_rejects_incomplete_micro_kv() -> None:
         factory_module.validate_runtime_features(config)
 
 
-def test_factory_rejects_unwired_distributed_backend() -> None:
+def test_factory_accepts_wired_distributed_backends() -> None:
     config = {
         "runtime": {"gradient_checkpointing": False, "distributed_backend": "deepspeed_zero2"},
         "compiler": {"micro_kv": {"enabled": False}},
     }
 
-    with pytest.raises(factory_module.UnsupportedRuntimeFeature, match="distributed checkpoint"):
+    factory_module.validate_runtime_features(config)
+
+
+def test_factory_rejects_unknown_distributed_backend() -> None:
+    config = {
+        "runtime": {"gradient_checkpointing": False, "distributed_backend": "invented"},
+        "compiler": {"micro_kv": {"enabled": False}},
+    }
+
+    with pytest.raises(factory_module.UnsupportedRuntimeFeature, match="unknown distributed"):
         factory_module.validate_runtime_features(config)
 
 

@@ -25,10 +25,18 @@ from doc_to_atom.losses.objectives import (
     sparse_regularization_loss,
 )
 from doc_to_atom.runtime.run import atomic_write_json
-from doc_to_atom.training.checkpoint import load_training_checkpoint, save_training_checkpoint
+from doc_to_atom.training.checkpoint import (
+    load_distributed_checkpoint,
+    load_training_checkpoint,
+    publish_checkpoint_pointer,
+    save_distributed_checkpoint,
+    save_training_checkpoint,
+)
 from doc_to_atom.training.curriculum import stage_for_step
 from doc_to_atom.training.distributed import (
+    DistributedEpochPlan,
     DistributedPreflightError,
+    DistributedTopologyError,
     LocalTrainingRuntime,
 )
 from doc_to_atom.training.state import TrainerState
@@ -349,13 +357,12 @@ def run_training(
         raise DistributedPreflightError(
             "runtime and config gradient_accumulation_steps differ"
         )
-    if runtime.is_distributed:
-        raise DistributedPreflightError(
-            "distributed execution remains blocked until atomic all-rank checkpoint "
-            "publication and resume are installed"
-        )
+    if not runtime.is_main_process and tracker is not None:
+        raise DistributedPreflightError("only the main rank may own a run tracker")
     max_epochs = int(training_config["max_epochs"])
-    updates_per_epoch = math.ceil(len(train_records) / accumulation)
+    updates_per_epoch = math.ceil(
+        len(train_records) / (accumulation * runtime.world_size)
+    )
     total_steps = max(1, int(training_config.get("max_steps") or updates_per_epoch * max_epochs))
     trainable = [parameter for parameter in system.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(
@@ -373,14 +380,22 @@ def run_training(
     fingerprint = config_fingerprint(config)
     state = TrainerState(config_fingerprint=fingerprint)
     if resume_from is not None:
-        state = load_training_checkpoint(
-            modules,
-            _resume_path(resume_from),
-            optimizer=optimizer,
-            scheduler=scheduler,
-            expected_fingerprints={"config": fingerprint},
-            restore_rng=True,
-        )
+        checkpoint_path = _resume_path(resume_from)
+        if runtime.is_distributed:
+            state = load_distributed_checkpoint(
+                runtime,
+                checkpoint_path,
+                expected_fingerprints={"config": fingerprint},
+            )
+        else:
+            state = load_training_checkpoint(
+                modules,
+                checkpoint_path,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                expected_fingerprints={"config": fingerprint},
+                restore_rng=True,
+            )
         if not state.exact_resume:
             raise ValueError("training resume requires a checkpoint v2 exact-resume state")
 
@@ -408,7 +423,8 @@ def run_training(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / "train_log.jsonl"
     if resume_from is None:
-        log_path.unlink(missing_ok=True)
+        if runtime.is_main_process:
+            log_path.unlink(missing_ok=True)
     optimizer.zero_grad(set_to_none=True)
     micro_step = state.micro_step
     optimizer_step = state.optimizer_step
@@ -424,14 +440,29 @@ def run_training(
     stopped = state.early_stopped
     window_traces: list[dict] = []
 
+    current_epoch_plan: DistributedEpochPlan | None = None
+
     def save_state(epoch: int, cursor: int, *, best: bool = False) -> Path:
+        if runtime.is_distributed:
+            checkpoint_plan = current_epoch_plan
+            if checkpoint_plan is None or checkpoint_plan.epoch != epoch:
+                checkpoint_plan = DistributedEpochPlan.build(
+                    source_size=len(train_records),
+                    seed=seed,
+                    epoch=epoch,
+                    world_size=runtime.world_size,
+                    accumulation_steps=accumulation,
+                )
+            sampler_state = checkpoint_plan.state_dict()
+        else:
+            sampler_state = {"seed": seed, "epoch": epoch, "cursor": cursor}
         current = TrainerState(
             epoch=epoch,
             record_cursor=cursor,
             micro_step=micro_step,
             optimizer_step=optimizer_step,
             curriculum_step=offset + optimizer_step,
-            sampler_state={"seed": seed, "epoch": epoch, "cursor": cursor},
+            sampler_state=sampler_state,
             best_validation=(
                 float("inf")
                 if early_stopping is None or early_stopping.best is None
@@ -445,27 +476,67 @@ def run_training(
             config_fingerprint=fingerprint,
             wandb_run_id=None if tracker is None else tracker.run_id,
             wandb_mode="disabled" if tracker is None else tracker.mode,
+            world_size=runtime.world_size,
+            distributed_backend=runtime.backend,
+            accumulation_steps=accumulation,
         )
         destination = checkpoint_dir / f"step-{optimizer_step:08d}"
-        save_training_checkpoint(
-            modules,
-            destination,
-            state=current,
-            optimizer=optimizer,
-            scheduler=scheduler,
-        )
-        pointer = {"path": destination.name, "optimizer_step": optimizer_step}
-        atomic_write_json(checkpoint_dir / "last.json", pointer)
-        if best:
-            atomic_write_json(checkpoint_dir / "best.json", pointer)
-        if tracker is not None:
-            tracker.log_checkpoint(destination)
+        if runtime.is_distributed:
+            save_distributed_checkpoint(runtime, modules, destination, state=current)
+        else:
+            save_training_checkpoint(
+                modules,
+                destination,
+                state=current,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            )
+        if runtime.is_main_process:
+            publish_checkpoint_pointer(
+                checkpoint_dir / "last.json",
+                destination,
+                optimizer_step=optimizer_step,
+            )
+            if best:
+                publish_checkpoint_pointer(
+                    checkpoint_dir / "best.json",
+                    destination,
+                    optimizer_step=optimizer_step,
+                )
+            if tracker is not None:
+                tracker.log_checkpoint(destination)
+        runtime.wait_for_everyone()
         return destination
 
     for epoch in range(start_epoch, max_epochs):
         system.train()
         raw_system.base_model.eval()
-        order = _epoch_order(len(train_records), seed, epoch)
+        padding_mask: tuple[bool, ...] | list[bool]
+        if runtime.is_distributed:
+            generated_plan = DistributedEpochPlan.build(
+                source_size=len(train_records),
+                seed=seed,
+                epoch=epoch,
+                world_size=runtime.world_size,
+                accumulation_steps=accumulation,
+            )
+            if epoch == start_epoch and state.sampler_state.get("schema_version"):
+                restored_plan = DistributedEpochPlan.from_state_dict(
+                    state.sampler_state,
+                    expected_world_size=runtime.world_size,
+                    expected_accumulation_steps=accumulation,
+                )
+                if restored_plan != generated_plan:
+                    raise DistributedTopologyError(
+                        "saved sampler plan differs from the deterministic runtime plan"
+                    )
+            current_epoch_plan = generated_plan
+            order = list(generated_plan.rank_indices(runtime.rank))
+            padding_mask = generated_plan.rank_padding_mask(runtime.rank)
+        else:
+            current_epoch_plan = None
+            order = _epoch_order(len(train_records), seed, epoch)
+            padding_mask = [False] * len(order)
         cursor_begin = start_cursor if epoch == start_epoch else 0
         pending = 0
         for cursor in range(cursor_begin, len(order)):
@@ -486,10 +557,28 @@ def run_training(
                     last_trace = trace
                 if not record_totals:
                     continue
-                runtime.backward(torch.stack(record_totals).mean())
+                record_loss = torch.stack(record_totals).mean()
+                if runtime.is_distributed:
+                    group_size = runtime.world_size * accumulation
+                    group_index = cursor // accumulation
+                    global_begin = group_index * group_size
+                    assert current_epoch_plan is not None
+                    real_count = sum(
+                        not value
+                        for value in current_epoch_plan.padding_mask[
+                            global_begin : global_begin + group_size
+                        ]
+                    )
+                    record_loss = record_loss * (
+                        0.0
+                        if padding_mask[cursor]
+                        else group_size / real_count
+                    )
+                runtime.backward(record_loss)
                 micro_step += 1
                 pending += 1
-                window_traces.extend(record_traces)
+                if not padding_mask[cursor]:
+                    window_traces.extend(record_traces)
                 step_result = runtime.finish_micro_step(
                     optimizer,
                     scheduler,
@@ -541,17 +630,18 @@ def run_training(
                 "train": _split_trace_report(window_traces),
                 "validation": last_validation_report if validation_due else None,
             }
-            with log_path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(json.dumps(event) + "\n")
-            if tracker is not None:
-                tracker.log_metrics(
-                    {
-                        "train/total_loss": event["train"]["overall"].get("total_loss"),
-                        "train/gradient_norm": event["gradient_norm"],
-                        "train/learning_rate": event["learning_rate"],
-                    },
-                    step=optimizer_step,
-                )
+            if runtime.is_main_process:
+                with log_path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(json.dumps(event) + "\n")
+                if tracker is not None:
+                    tracker.log_metrics(
+                        {
+                            "train/total_loss": event["train"]["overall"].get("total_loss"),
+                            "train/gradient_norm": event["gradient_norm"],
+                            "train/learning_rate": event["learning_rate"],
+                        },
+                        step=optimizer_step,
+                    )
             window_traces = []
             max_steps_reached = optimizer_step >= total_steps
             requested_stop = (

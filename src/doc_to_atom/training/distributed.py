@@ -144,6 +144,23 @@ class AccelerateTrainingRuntime:
     def wait_for_everyone(self) -> None:
         self.accelerator.wait_for_everyone()
 
+    def save_state(self, path) -> None:
+        self.accelerator.save_state(str(path), safe_serialization=True)
+
+    def load_state(self, path) -> None:
+        self.accelerator.load_state(str(path))
+
+    def collective_errors(self, local_error: str | None) -> list[str | None]:
+        if self.world_size == 1:
+            return [local_error]
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            raise DistributedPreflightError(
+                "multi-rank checkpointing requires an initialized torch.distributed group"
+            )
+        errors: list[str | None] = [None] * self.world_size
+        torch.distributed.all_gather_object(errors, local_error)
+        return errors
+
 
 class LocalTrainingRuntime:
     """Single-process oracle with the same optimizer-step interface."""

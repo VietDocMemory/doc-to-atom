@@ -14,6 +14,8 @@ import torch
 from safetensors.torch import load_file, save_file
 from torch import nn
 
+from doc_to_atom.runtime.run import atomic_write_json
+
 from .state import TrainerState
 
 SCHEMA_VERSION = 2
@@ -226,6 +228,147 @@ def load_training_checkpoint(
     return state
 
 
+def _distributed_failures(errors: list[str | None], phase: str) -> None:
+    failures = [f"rank {rank}: {error}" for rank, error in enumerate(errors) if error]
+    if failures:
+        raise CheckpointError(
+            f"distributed checkpoint {phase} failed; " + "; ".join(failures)
+        )
+
+
+def _validate_distributed_topology(runtime, state: TrainerState) -> None:
+    expected = {
+        "world_size": int(runtime.world_size),
+        "distributed_backend": str(runtime.backend),
+        "accumulation_steps": int(runtime.accumulation_steps),
+    }
+    actual = {
+        "world_size": state.world_size,
+        "distributed_backend": state.distributed_backend,
+        "accumulation_steps": state.accumulation_steps,
+    }
+    mismatches = [
+        f"{name}: checkpoint={actual[name]!r}, runtime={value!r}"
+        for name, value in expected.items()
+        if actual[name] != value
+    ]
+    if mismatches:
+        raise IncompatibleCheckpointError(
+            "distributed checkpoint topology mismatch: " + ", ".join(mismatches)
+        )
+
+
+def save_distributed_checkpoint(
+    runtime,
+    modules: Mapping[str, nn.Module],
+    path: str | Path,
+    *,
+    state: TrainerState,
+) -> Path:
+    """Collectively save, then atomically publish, a distributed checkpoint.
+
+    Every rank must call this function. Accelerate owns optimizer, scheduler,
+    scaler, and per-rank RNG state. Rank zero additionally writes a portable
+    trainable-weights checkpoint for evaluation and non-sharded inspection.
+    """
+    _validate_distributed_topology(runtime, state)
+    target = Path(path).resolve()
+    incomplete = target.with_name(f".{target.name}.incomplete")
+    if runtime.is_main_process:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            raise CheckpointError(f"refusing to overwrite committed checkpoint: {target}")
+        if incomplete.exists():
+            shutil.rmtree(incomplete)
+        incomplete.mkdir(parents=True)
+    runtime.wait_for_everyone()
+
+    local_error = None
+    try:
+        runtime.save_state(incomplete / "accelerate")
+    except Exception as exc:  # each rank reports before anyone can publish
+        local_error = f"{type(exc).__name__}: {exc}"
+    _distributed_failures(runtime.collective_errors(local_error), "Accelerate save")
+    runtime.wait_for_everyone()
+
+    portable_error = None
+    if runtime.is_main_process:
+        try:
+            save_training_checkpoint(
+                modules,
+                incomplete / "portable",
+                state=state,
+                optimizer=None,
+                scheduler=None,
+                scaler=None,
+            )
+            _json_dump(incomplete / "state.json", state.to_dict())
+            _json_dump(
+                incomplete / "distributed.json",
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "backend": runtime.backend,
+                    "world_size": runtime.world_size,
+                    "accumulation_steps": runtime.accumulation_steps,
+                    "accelerate_state": "accelerate",
+                    "portable_checkpoint": "portable",
+                },
+            )
+        except Exception as exc:
+            portable_error = f"{type(exc).__name__}: {exc}"
+    _distributed_failures(runtime.collective_errors(portable_error), "portable save")
+    runtime.wait_for_everyone()
+
+    if runtime.is_main_process:
+        (incomplete / COMMIT_MARKER).write_text("distributed-v2\n", encoding="utf-8")
+        os.replace(incomplete, target)
+    runtime.wait_for_everyone()
+    if not (target / COMMIT_MARKER).is_file():
+        raise CheckpointError(f"distributed checkpoint was not committed: {target}")
+    return target
+
+
+def load_distributed_checkpoint(
+    runtime,
+    path: str | Path,
+    *,
+    expected_fingerprints: Mapping[str, str] | None = None,
+) -> TrainerState:
+    """Validate shared control state before collectively restoring Accelerate."""
+    checkpoint = Path(path).resolve()
+    if not checkpoint.is_dir() or not (checkpoint / COMMIT_MARKER).is_file():
+        raise CheckpointError(f"checkpoint is missing or not committed: {checkpoint}")
+    state = TrainerState.from_dict(
+        json.loads((checkpoint / "state.json").read_text(encoding="utf-8"))
+    )
+    if state.schema_version != SCHEMA_VERSION:
+        raise CheckpointError(f"unsupported checkpoint schema: {state.schema_version}")
+    _validate_fingerprints(state, expected_fingerprints)
+    _validate_distributed_topology(runtime, state)
+    runtime.load_state(checkpoint / "accelerate")
+    runtime.wait_for_everyone()
+    return state
+
+
+def publish_checkpoint_pointer(
+    pointer_path: str | Path,
+    checkpoint_path: str | Path,
+    *,
+    optimizer_step: int,
+) -> None:
+    """Atomically point at an already committed sibling checkpoint."""
+    pointer = Path(pointer_path).resolve()
+    checkpoint = Path(checkpoint_path).resolve()
+    if not (checkpoint / COMMIT_MARKER).is_file():
+        raise CheckpointError(f"cannot publish pointer to uncommitted checkpoint: {checkpoint}")
+    if checkpoint.parent != pointer.parent:
+        raise CheckpointError("checkpoint pointer target must be a sibling directory")
+    atomic_write_json(
+        pointer,
+        {"path": checkpoint.name, "optimizer_step": int(optimizer_step)},
+    )
+
+
 def save_checkpoint(
     modules: dict[str, nn.Module],
     path: str | Path,
@@ -261,7 +404,10 @@ __all__ = [
     "IncompatibleCheckpointError",
     "TrainerState",
     "load_checkpoint",
+    "load_distributed_checkpoint",
     "load_training_checkpoint",
+    "publish_checkpoint_pointer",
     "save_checkpoint",
+    "save_distributed_checkpoint",
     "save_training_checkpoint",
 ]

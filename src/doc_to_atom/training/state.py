@@ -27,6 +27,7 @@ class TrainerState:
     wandb_mode: str = "disabled"
     world_size: int = 1
     distributed_backend: str = "none"
+    accumulation_steps: int = 1
     exact_resume: bool = True
 
     def to_dict(self) -> dict[str, Any]:
