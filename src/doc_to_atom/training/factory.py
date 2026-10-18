@@ -27,10 +27,10 @@ class UnsupportedRuntimeFeature(RuntimeError):
 def validate_runtime_features(config: dict) -> None:
     runtime = config.get("runtime", {})
     backend = runtime.get("distributed_backend", "none")
-    if backend not in {None, "none"}:
+    if backend not in {None, "none", "accelerate", "deepspeed_zero2"}:
         raise UnsupportedRuntimeFeature(
-            f"distributed backend {backend!r} is blocked: distributed checkpoint publication, "
-            "sampler parity, and optimizer-state resume are not wired through Accelerate yet"
+            f"unknown distributed backend {backend!r}; expected none, accelerate, "
+            "or deepspeed_zero2"
         )
     if runtime.get("gradient_checkpointing"):
         raise UnsupportedRuntimeFeature(

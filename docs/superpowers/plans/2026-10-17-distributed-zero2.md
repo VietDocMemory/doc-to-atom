@@ -73,7 +73,7 @@
 
 **Files:** Modify `scripts/molab/train_zero2.sh`, `configs/accelerate/molab_zero2.yaml`, `configs/deepspeed_zero2.json`; create `tests/test_molab_zero2.py`; modify `PRE_FULL_RUN_CHECKLIST.md`.
 
-- [ ] Preflight CUDA/NCCL/DeepSpeed versions, GPU count, writable storage, effective batch, and config/checkpoint hashes.
+- [x] Prepare and unit-test preflight for CUDA/NCCL/DeepSpeed versions, GPU count, writable storage, effective batch, and config/checkpoint hashes.
 - [ ] Run `pytest -m molab` on two Molab GPUs using a tiny fixture, then run fresh/interrupted/resume equivalence.
 - [ ] Save logs and reports under the run directory and W&B offline.
 - [ ] Remove the launcher fail-fast only after the 2-GPU evidence artifact is present and validated.

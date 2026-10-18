@@ -3,7 +3,26 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import torch
+import pytest
 from torch import nn
+
+
+def pytest_addoption(parser) -> None:
+    parser.addoption(
+        "--run-molab",
+        action="store_true",
+        default=False,
+        help="run tests requiring the Molab 2-GPU CUDA/NCCL/DeepSpeed environment",
+    )
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    if config.getoption("--run-molab"):
+        return
+    skip = pytest.mark.skip(reason="requires --run-molab and two CUDA GPUs")
+    for item in items:
+        if "molab" in item.keywords:
+            item.add_marker(skip)
 
 
 class ToyAttention(nn.Module):

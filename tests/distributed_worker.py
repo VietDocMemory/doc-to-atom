@@ -27,6 +27,9 @@ SEED = 314159
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--backend", choices=("accelerate", "deepspeed_zero2"), default="accelerate"
+    )
     parser.add_argument("--mode", choices=("continuous", "interrupt", "resume"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume", type=Path)
@@ -34,21 +37,26 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _config(world_size: int, accumulation_steps: int) -> dict[str, Any]:
+def _config(world_size: int, accumulation_steps: int, backend: str) -> dict[str, Any]:
     return {
         "training": {
             "gradient_accumulation_steps": accumulation_steps,
             "micro_batch_size": 1,
             "effective_global_batch": GLOBAL_BATCH,
         },
-        "runtime": {"distributed_backend": "accelerate", "device": "cpu"},
+        "runtime": {
+            "distributed_backend": backend,
+            "device": "cpu" if backend == "accelerate" else "cuda",
+        },
     }
 
 
-def _example(sample_id: int) -> tuple[torch.Tensor, torch.Tensor]:
+def _example(
+    sample_id: int, *, dtype: torch.dtype, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
     value = float(sample_id + 1)
-    inputs = torch.tensor([[value, value * value / 10.0]], dtype=torch.float64)
-    target = torch.tensor([[0.35 * value - 0.2]], dtype=torch.float64)
+    inputs = torch.tensor([[value, value * value / 10.0]], dtype=dtype, device=device)
+    target = torch.tensor([[0.35 * value - 0.2]], dtype=dtype, device=device)
     return inputs, target
 
 
@@ -73,9 +81,12 @@ def main() -> None:
     if args.crash_rank == rank:
         raise RuntimeError(f"intentional rank crash on rank {rank}")
 
-    runtime = AccelerateTrainingRuntime(_config(world_size, accumulation_steps))
+    runtime = AccelerateTrainingRuntime(
+        _config(world_size, accumulation_steps, args.backend)
+    )
     torch.manual_seed(20261018)
-    model = nn.Sequential(nn.Linear(2, 3), nn.Tanh(), nn.Linear(3, 1)).to(torch.float64)
+    dtype = torch.float64 if args.backend == "accelerate" else torch.float32
+    model = nn.Sequential(nn.Linear(2, 3), nn.Tanh(), nn.Linear(3, 1)).to(dtype)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.025, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.8)
     model, optimizer, scheduler = runtime.prepare(model, optimizer, scheduler)
@@ -127,7 +138,7 @@ def main() -> None:
     for local_cursor in range(cursor, len(indices)):
         sample_id = indices[local_cursor]
         with runtime.accumulate(model):
-            inputs, target = _example(sample_id)
+            inputs, target = _example(sample_id, dtype=dtype, device=runtime.device)
             prediction = model(inputs)
             loss = torch.nn.functional.mse_loss(prediction, target)
             group_begin = (local_cursor // accumulation_steps) * GLOBAL_BATCH
@@ -183,7 +194,9 @@ def main() -> None:
         "sampler_cursor": sampler_state["cursor"],
         "learning_rate": float(scheduler.get_last_lr()[0]),
         "consumed": consumed,
-        "optimizer": _optimizer_snapshot(optimizer),
+        "optimizer": (
+            _optimizer_snapshot(optimizer) if args.backend == "accelerate" else []
+        ),
         "next_rng": {
             "python": random.random(),
             "numpy": float(np.random.random()),

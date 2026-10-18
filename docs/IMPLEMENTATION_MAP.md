@@ -13,7 +13,7 @@
 | Curriculum, ten objectives and optimization loop | `training/curriculum.py`, `losses/objectives.py`, `training/loop.py` |
 | Offline memory-bank build and online query | `inference/build_memory.py`, `inference/query.py` |
 | Metrics, required baselines and trace logging | `evaluation/` |
-| Checkpoint save/resume | `training/checkpoint.py` |
+| Distributed checkpoint/save resume and Molab gate | `training/checkpoint.py`, `training/distributed.py`, `training/molab_gate.py` |
 
 MicroKV is represented at the compiler/composer interface, but training with it
 is rejected explicitly because the paper does not publish its shape, injection

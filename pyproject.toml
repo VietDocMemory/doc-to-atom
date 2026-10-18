@@ -43,6 +43,7 @@ addopts = "-q"
 markers = [
   "integration: bounded multi-component integration tests",
   "distributed: multi-process CPU/Gloo regression tests",
+  "molab: explicit two-GPU CUDA/NCCL/DeepSpeed integration gate",
 ]
 
 [tool.ruff]
