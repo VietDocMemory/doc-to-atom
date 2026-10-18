@@ -35,10 +35,12 @@ class AccelerateTrainingRuntime:
                 "gradient_accumulation_steps must be positive"
             )
         if accelerator is None:
-            from accelerate import Accelerator
+            from accelerate import Accelerator, DataLoaderConfiguration
 
             accelerator = Accelerator(
-                gradient_accumulation_steps=self.accumulation_steps
+                cpu=str(runtime.get("device", "")).lower() == "cpu",
+                dataloader_config=DataLoaderConfiguration(split_batches=True),
+                gradient_accumulation_steps=self.accumulation_steps,
             )
         self.accelerator = accelerator
         self.world_size = int(accelerator.num_processes)
@@ -142,6 +144,13 @@ class AccelerateTrainingRuntime:
         return self.accelerator.unwrap_model(model)
 
     def wait_for_everyone(self) -> None:
+        if (
+            torch.distributed.is_available()
+            and torch.distributed.is_initialized()
+            and torch.distributed.get_backend() == "gloo"
+        ):
+            torch.distributed.barrier()
+            return
         self.accelerator.wait_for_everyone()
 
     def save_state(self, path) -> None:
@@ -309,8 +318,10 @@ class DistributedEpochPlan:
     def optimizer_steps_per_epoch(self) -> int:
         return len(self.rank_indices(0)) // self.accumulation_steps
 
-    def state_dict(self) -> dict[str, Any]:
-        return {
+    def state_dict(self, *, cursor: int | None = None) -> dict[str, Any]:
+        if cursor is not None:
+            self.resume_rank_indices(0, cursor)
+        state = {
             "schema_version": self.SCHEMA_VERSION,
             "source_size": self.source_size,
             "seed": self.seed,
@@ -320,6 +331,9 @@ class DistributedEpochPlan:
             "global_indices": list(self.global_indices),
             "padding_mask": list(self.padding_mask),
         }
+        if cursor is not None:
+            state["cursor"] = cursor
+        return state
 
     @classmethod
     def from_state_dict(

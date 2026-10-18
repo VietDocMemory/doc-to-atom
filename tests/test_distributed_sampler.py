@@ -64,6 +64,21 @@ def test_rank_cursor_resumes_at_next_unconsumed_local_sample() -> None:
         plan.resume_rank_indices(rank=0, cursor=100)
 
 
+def test_serialized_sampler_contract_carries_optimizer_boundary_cursor() -> None:
+    plan = DistributedEpochPlan.build(
+        source_size=9, seed=7, epoch=2, world_size=2, accumulation_steps=2
+    )
+
+    state = plan.state_dict(cursor=2)
+
+    assert state["cursor"] == 2
+    assert DistributedEpochPlan.from_state_dict(
+        state, expected_world_size=2, expected_accumulation_steps=2
+    ) == plan
+    with pytest.raises(ValueError, match="optimizer boundary"):
+        plan.state_dict(cursor=1)
+
+
 def test_serialized_plan_rejects_changed_distributed_topology() -> None:
     plan = DistributedEpochPlan.build(
         source_size=8, seed=5, epoch=1, world_size=2, accumulation_steps=4

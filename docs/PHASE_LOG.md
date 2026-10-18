@@ -21,9 +21,13 @@
 6. **Objectives/curriculum — complete.** Implemented all disclosed objective
    families and the four curriculum stages. Loss coefficients, `rho`, and several
    exact objective forms are unpublished and live only in the fallback config.
-7. **Training/inference/evaluation — complete.** Added teacher/student execution,
-   accumulation, cosine schedule, clipping, checkpoint/resume, offline/online
-   separation, baselines, metrics, and per-example traces.
+7. **Training/inference/evaluation — correctness work in progress.** Added
+   teacher/student execution, accumulation, cosine schedule, clipping,
+   checkpoint/resume, offline/online separation, baselines, metrics, and
+   per-example traces. Task 5 proves 1-process versus 2-process CPU/Gloo and
+   interrupted/resume equivalence for optimizer, scheduler, curriculum, sampler,
+   portable weights, and per-rank RNG (`atol=1e-7`, `rtol=1e-6`). Multi-rank
+   production launch remains fail-fast pending the Molab 2-GPU ZeRO-2 gate.
 8. **Synthetic smoke and unit tests — complete.** The smoke performs forward,
    all losses, backward, optimizer step, and checkpoint round-trip.
 9. **Real-data subset — smoke complete.** Grouped a small SQuAD subset, atomized

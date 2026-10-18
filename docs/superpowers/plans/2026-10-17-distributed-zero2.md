@@ -45,29 +45,29 @@
 
 **Files:** Modify `src/doc_to_atom/training/distributed.py`, `src/doc_to_atom/training/loop.py`, `src/doc_to_atom/training/cli.py`, `src/doc_to_atom/training/factory.py`; create `tests/test_distributed_runtime.py`.
 
-- [ ] RED contract tests proving prepare happens once, backward/clip/step happen on all ranks, logging happens on rank 0, and one optimizer update advances scheduler/curriculum exactly once.
-- [ ] Use Accelerate accumulation semantics; configure deterministic padding so no partial window is required in distributed mode.
-- [ ] Validate effective batch as microbatch × accumulation × world size.
-- [ ] Remove the distributed fail-fast only for runtime instances that pass all preflight checks.
-- [ ] Commit `feat(training): integrate accelerate-owned optimization`.
+- [x] RED contract tests proving prepare happens once, backward/clip/step happen on all ranks, logging happens on rank 0, and one optimizer update advances scheduler/curriculum exactly once.
+- [x] Use Accelerate accumulation semantics; configure deterministic padding so no partial window is required in distributed mode.
+- [x] Validate effective batch as microbatch × accumulation × world size.
+- [x] Keep the user-facing distributed fail-fast until the Task 5 and Molab Task 6 gates pass.
+- [x] Commit `feat(training): integrate accelerate-owned optimization`.
 
 ## Task 4: Publish and restore atomic distributed checkpoints
 
 **Files:** Modify `src/doc_to_atom/training/checkpoint.py`, `src/doc_to_atom/training/distributed.py`, `src/doc_to_atom/training/state.py`; create `tests/test_distributed_checkpoint.py`.
 
-- [ ] RED tests for all-rank save participation, rank-0 publication, failure before `COMMITTED`, pointer ordering, world-size/backend mismatch, Accelerate load before cursor use, and portable weights.
-- [ ] Write to a deterministic incomplete sibling, call `Accelerator.save_state` on every rank, barrier, write portable checkpoint/metadata on rank 0, barrier, then atomically publish.
-- [ ] Restore model/optimizer/scheduler/scaler/RNG through `Accelerator.load_state`; restore control state only after compatibility validation.
-- [ ] Commit `feat(training): add atomic distributed checkpoint resume`.
+- [x] RED tests for all-rank save participation, rank-0 publication, failure before `COMMITTED`, pointer ordering, world-size/backend mismatch, Accelerate load before cursor use, and portable weights.
+- [x] Write to a deterministic incomplete sibling, call `Accelerator.save_state` on every rank, barrier, write portable checkpoint/metadata on rank 0, barrier, then atomically publish.
+- [x] Restore model/optimizer/scheduler/scaler/RNG through `Accelerator.load_state`; restore control state only after compatibility validation.
+- [x] Commit `feat(training): add atomic distributed checkpoint resume`.
 
 ## Task 5: Add 1-process versus 2-process regression harness
 
 **Files:** Create `tests/distributed_worker.py`, `tests/test_distributed_equivalence.py`; modify `pyproject.toml`.
 
-- [ ] Run a tiny deterministic model through single-process, two-process Gloo, and interrupted two-process resume.
-- [ ] Compare optimizer step, scheduler LR, curriculum step, consumed global sample IDs, portable trainable weights, and next RNG draws within declared tolerances.
-- [ ] Make subprocess timeout, rank crash, and partial artifact diagnostics explicit.
-- [ ] Commit `test(training): prove two-process distributed resume equivalence`.
+- [x] Run a tiny deterministic model through single-process, two-process Gloo, and interrupted two-process resume.
+- [x] Compare optimizer step, scheduler LR, curriculum step, consumed global sample IDs, portable trainable weights, optimizer tensors, and next RNG draws at `atol=1e-7`, `rtol=1e-6` (counters/order exact).
+- [x] Make subprocess timeout, rank crash, and partial artifact diagnostics explicit.
+- [x] Commit `test(training): prove two-process distributed resume equivalence`.
 
 ## Task 6: Enable and verify Molab ZeRO-2
 

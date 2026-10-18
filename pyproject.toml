@@ -42,6 +42,7 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
   "integration: bounded multi-component integration tests",
+  "distributed: multi-process CPU/Gloo regression tests",
 ]
 
 [tool.ruff]

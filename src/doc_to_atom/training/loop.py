@@ -453,7 +453,7 @@ def run_training(
                     world_size=runtime.world_size,
                     accumulation_steps=accumulation,
                 )
-            sampler_state = checkpoint_plan.state_dict()
+            sampler_state = checkpoint_plan.state_dict(cursor=cursor)
         else:
             sampler_state = {"seed": seed, "epoch": epoch, "cursor": cursor}
         current = TrainerState(
