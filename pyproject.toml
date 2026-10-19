@@ -29,6 +29,7 @@ test = ["pytest>=8"]
 
 [project.scripts]
 doc2atom-atomize = "doc_to_atom.atomization.cli:main"
+doc2atom-migrate-v2 = "doc_to_atom.atomization.migration_cli:main"
 doc2atom-validate = "doc_to_atom.data.validation_cli:main"
 doc2atom-smoke = "doc_to_atom.training.smoke:main"
 doc2atom-train = "doc_to_atom.training.cli:main"
