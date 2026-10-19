@@ -10,6 +10,7 @@ from torch import nn
 
 import doc_to_atom.training.cli as cli_module
 import doc_to_atom.training.factory as factory_module
+from doc_to_atom.atomization.models import Atom, QuestionAnnotation, StructuredRecord
 
 
 def test_parser_accepts_resume_latest_and_offline_tracking() -> None:
@@ -75,6 +76,24 @@ def test_factory_rejects_unknown_distributed_backend() -> None:
 def test_cli_fresh_run_snapshots_config_and_resume_uses_latest_pointer(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     output = tmp_path / "run"
+    data = tmp_path / "atoms.jsonl"
+    record = StructuredRecord(
+        record_id="r1",
+        dataset="squad",
+        split="train",
+        context="Gold",
+        atoms=[Atom(
+            atom_id="a1", semantic_type="fact_claim", content="Gold", source_span="Gold",
+            retrieval_text="Gold", is_answer_bearing=True, abstraction_level="evidence",
+            confidence=1.0,
+        )],
+        qa_pairs=[QuestionAnnotation(
+            question_id="q1", question="What?", answers=("Gold",),
+            answer_provenance="source", question_type="single_hop",
+            gold_atom_ids=["a1"], relevant_atom_ids=["a1"],
+        )],
+    )
+    data.write_text(record.model_dump_json() + "\n", encoding="utf-8")
     calls: list[dict] = []
 
     def system_factory(config, enable_reranker=True):
@@ -94,7 +113,7 @@ def test_cli_fresh_run_snapshots_config_and_resume_uses_latest_pointer(tmp_path:
         "--config",
         str(root / "configs/experiments/small_overfit.yaml"),
         "--data",
-        str(root / "data/squad_small_atoms_openai.jsonl"),
+        str(data),
         "--output",
         str(output),
         "--wandb-mode",

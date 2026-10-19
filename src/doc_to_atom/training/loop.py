@@ -707,7 +707,7 @@ def _validation_report(system, tokenizer, records, config, step):
     traces = []
     for record in records:
         bank = _memory(system, tokenizer, record, config)
-        for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
+        for qa in record.qa_pairs:
             _bundle, _lm, trace = _one_question(
                 system, tokenizer, record, qa, bank, config, step
             )

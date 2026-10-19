@@ -18,6 +18,54 @@ from doc_to_atom.training.system import TeacherStudentSystem
 import doc_to_atom.training.trainer as trainer_module
 
 
+def test_validation_evaluates_generated_irrelevant_after_training_question_cap(monkeypatch):
+    record = _record("validation")
+    record.qa_pairs.append(
+        QuestionAnnotation(
+            question_id="generated_irrelevant_0",
+            question="Unknown?",
+            answers=(),
+            answer_provenance="generated_irrelevant",
+            question_type="irrelevant",
+            is_irrelevant=True,
+            is_generated_irrelevant=True,
+        )
+    )
+    seen = []
+    monkeypatch.setattr(loop_module, "_memory", lambda *args: object())
+
+    def fake_one_question(system, tokenizer, row, qa, bank, config, step):
+        seen.append(qa.question_id)
+        return None, 0.0, {
+            "question_id": qa.question_id,
+            "group": "generated_irrelevant" if qa.is_generated_irrelevant else "answerable",
+            "losses": {"lm": 0.0},
+            "total_loss": 0.0,
+            "gold_recall_at_1": None,
+            "gold_recall_at_k": None,
+            "mrr": None,
+            "routing_entropy": 0.0,
+            "adapter_norm": 0.0,
+            "token_accuracy": 0.0,
+            "selected_atom_ids": [],
+            "routing_weights": [],
+            "prediction": "unanswerable",
+            "target": "unanswerable",
+        }
+
+    monkeypatch.setattr(loop_module, "_one_question", fake_one_question)
+    report = loop_module._validation_report(
+        type("System", (), {"eval": lambda self: None})(),
+        None,
+        [record],
+        {"data": {"max_questions_per_sample": 1}},
+        1,
+    )
+
+    assert seen == ["q0", "generated_irrelevant_0"]
+    assert report["generated_irrelevant"]["count"] == 1
+
+
 class ToyTokenizer:
     def _ids(self, text):
         return [1] + [2 + ord(char) % 25 for char in text]
