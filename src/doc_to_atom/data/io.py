@@ -27,7 +27,11 @@ def write_jsonl(records: Iterable[StructuredRecord], path: str | Path) -> None:
             handle.write(record.model_dump_json() + "\n")
 
 
-def validate_jsonl(path: str | Path, reject_span_mismatch: bool = False) -> dict[str, int]:
+def validate_jsonl(
+    path: str | Path,
+    reject_span_mismatch: bool = False,
+    source_path: str | Path | None = None,
+) -> dict:
     records = read_jsonl(path)
     atoms = questions = warnings = invalid_spans = 0
     for record in records:
@@ -38,11 +42,20 @@ def validate_jsonl(path: str | Path, reject_span_mismatch: bool = False) -> dict
         invalid_spans += sum(not atom.span_valid for atom in record.atoms)
     if reject_span_mismatch and invalid_spans:
         raise ValueError(f"{invalid_spans} atoms have source spans absent from their context")
+    from doc_to_atom.data.semantic_validation import audit_records, load_source_records
+
+    sources = None if source_path is None else load_source_records(source_path)
+    semantic = audit_records(records, sources)
     return {
         "records": len(records),
         "atoms": atoms,
         "questions": questions,
         "warnings": warnings,
         "invalid_spans": invalid_spans,
+        **{
+            key: value
+            for key, value in semantic.items()
+            if key not in {"records", "questions", "warnings", "issues"}
+        },
     }
 
