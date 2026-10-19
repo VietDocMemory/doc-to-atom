@@ -56,14 +56,26 @@ def audit_record(
     if source_record is not None:
         for item in source_record.get("questions", []):
             question_id = str(item.get("id", item.get("question_id", "")))
+            if not question_id.strip():
+                raise ValueError("missing source question_id")
             if question_id in source_questions:
                 raise ValueError(f"duplicate source question_id: {question_id}")
             source_questions[question_id] = item
 
     adapter = get_dataset_adapter(record.dataset)
     seen_source_ids: set[str] = set()
+    seen_question_ids: set[str] = set()
     for qa in record.qa_pairs:
         base = _base(record, qa)
+        if qa.question_id in seen_question_ids:
+            issues.append({**base, "severity": "error", "code": "duplicate_question_id"})
+        seen_question_ids.add(qa.question_id)
+        if (
+            source_record is not None
+            and qa.question_id not in source_questions
+            and not qa.is_generated_irrelevant
+        ):
+            issues.append({**base, "severity": "error", "code": "unknown_question_id"})
         if not qa.is_irrelevant and not qa.gold_atom_ids:
             issues.append({**base, "severity": "error", "code": "answerable_empty_gold"})
         if qa.is_irrelevant and qa.answers:

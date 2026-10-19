@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from doc_to_atom.atomization.models import (
     AnnotationMeta,
     Atom,
@@ -208,3 +210,53 @@ def test_irrelevant_contract_and_failed_parse_status_are_errors(monkeypatch):
     assert "irrelevant_has_gold" in codes
     assert "irrelevant_has_supporting" in codes
     assert report["parse_errors"] == 1
+
+
+def test_semantic_audit_rejects_duplicate_and_unknown_question_ids(monkeypatch):
+    monkeypatch.setitem(
+        preprocessors.DATASET_ADAPTERS,
+        "synthetic_all",
+        preprocessors.DatasetAdapter(
+            preprocess=lambda row: row,
+            grounding_policy="all_answers_verbatim",
+            grounding_note="test",
+        ),
+    )
+    record = _record()
+    record.qa_pairs.extend(
+        [
+            record.qa_pairs[0].model_copy(deep=True),
+            QuestionAnnotation(
+                question_id="unknown-q",
+                question="Unknown?",
+                answers=("Exact Gold",),
+                answer_provenance="source",
+                question_type="single_hop",
+                gold_atom_ids=["a1"],
+                relevant_atom_ids=["a1"],
+            ),
+        ]
+    )
+
+    report = semantic_validation.audit_records([record], {"r1": _source(["Exact Gold"])})
+    codes = [issue["code"] for issue in report["issues"]]
+
+    assert "duplicate_question_id" in codes
+    assert "unknown_question_id" in codes
+
+
+def test_semantic_audit_hard_fails_missing_source_question_id(monkeypatch):
+    monkeypatch.setitem(
+        preprocessors.DATASET_ADAPTERS,
+        "synthetic_all",
+        preprocessors.DatasetAdapter(
+            preprocess=lambda row: row,
+            grounding_policy="all_answers_verbatim",
+            grounding_note="test",
+        ),
+    )
+    source = _source(["Exact Gold"])
+    del source["questions"][0]["id"]
+
+    with pytest.raises(ValueError, match="missing source question_id"):
+        semantic_validation.audit_records([_record()], {"r1": source})

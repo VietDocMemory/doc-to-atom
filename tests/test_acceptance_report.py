@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 from doc_to_atom.atomization.models import Atom, QuestionAnnotation, StructuredRecord
@@ -9,6 +10,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 _summary = _MODULE._summary
+build_report = _MODULE.build_report
 
 
 def _qa(question_id: str, answer: str, *, generated: bool = False):
@@ -65,3 +67,86 @@ def test_acceptance_summary_uses_source_questions_plus_generated_probes(tmp_path
     assert report["questions"] == 2
     assert report["grounding_failures"] == 0
     assert report["source_questions"] == 1
+
+
+def test_acceptance_report_rejects_any_semantic_error(tmp_path):
+    atom = Atom(
+        atom_id="a1",
+        semantic_type="fact_claim",
+        content="Gold",
+        source_span="Gold",
+        retrieval_text="Gold",
+        is_answer_bearing=True,
+        abstraction_level="evidence",
+        confidence=1,
+    )
+    record = StructuredRecord(
+        record_id="r1",
+        dataset="squad",
+        context="Gold",
+        atoms=[atom],
+        qa_pairs=[_qa("q1", "Gold")],
+    )
+    atomized = tmp_path / "atoms.jsonl"
+    source = tmp_path / "source.jsonl"
+    atomized.write_text(record.model_dump_json() + "\n", encoding="utf-8")
+    source.write_text(
+        json.dumps(
+            {
+                "id": "r1",
+                "dataset": "squad",
+                "context": "Gold",
+                "questions": [{"id": "q1", "question": "Different?", "answers": ["Gold"]}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_report(str(atomized), str(atomized), str(source))
+
+    assert report["after"]["errors"] == 1
+    assert report["accepted"] is False
+    assert "errors" in report["failed_gates"]
+
+
+def test_acceptance_report_does_not_filter_unknown_ids_from_after_artifact(tmp_path):
+    atom = Atom(
+        atom_id="a1",
+        semantic_type="fact_claim",
+        content="Gold",
+        source_span="Gold",
+        retrieval_text="Gold",
+        is_answer_bearing=True,
+        abstraction_level="evidence",
+        confidence=1,
+    )
+    record = StructuredRecord(
+        record_id="r1",
+        dataset="squad",
+        context="Gold",
+        atoms=[atom],
+        qa_pairs=[_qa("q1", "Gold"), _qa("provider-invented", "Gold")],
+    )
+    atomized = tmp_path / "atoms.jsonl"
+    source = tmp_path / "source.jsonl"
+    atomized.write_text(record.model_dump_json() + "\n", encoding="utf-8")
+    source.write_text(
+        json.dumps(
+            {
+                "id": "r1",
+                "dataset": "squad",
+                "context": "Gold",
+                "questions": [{"id": "q1", "question": "Question q1?", "answers": ["Gold"]}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_report(str(atomized), str(atomized), str(source))
+
+    assert "unknown_question_id" in {
+        issue["code"] for issue in report["after"]["issues"]
+    }
+    assert report["accepted"] is False

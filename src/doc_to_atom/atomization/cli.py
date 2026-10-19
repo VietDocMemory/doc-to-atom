@@ -26,6 +26,13 @@ def _source_answers(item: dict) -> list[str]:
     return list(value)
 
 
+def _source_question_id(item: dict) -> str:
+    value = item.get("id", item.get("question_id"))
+    if value is None or not str(value).strip():
+        raise ValueError("source question is missing question_id")
+    return str(value)
+
+
 def main() -> None:
     load_project_env()
     parser = argparse.ArgumentParser(description="Offline three-stage XML semantic atomization")
@@ -92,14 +99,14 @@ def main() -> None:
                 continue
             questions = [
                 QuestionAnnotation(
-                    question_id=str(item.get("id", f"q_{q_index}")),
+                    question_id=_source_question_id(item),
                     question=item["question"],
                     answers=_source_answers(item),
                     answer_provenance="source",
                     question_type=item.get("question_type", "single_hop"),
                     is_irrelevant=bool(item.get("is_irrelevant", False)),
                 )
-                for q_index, item in enumerate(raw.get("questions", []))
+                for item in raw.get("questions", [])
             ]
             record = atomizer.atomize(
                 record_id,

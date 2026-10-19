@@ -9,6 +9,7 @@ from doc_to_atom.data.semantic_validation import audit_records, load_source_reco
 
 
 REQUIRED_ZERO = (
+    "errors",
     "answerable_empty_gold",
     "grounding_failures",
     "gold_supporting_overlap",
@@ -23,22 +24,24 @@ REQUIRED_ZERO = (
 )
 
 
-def _summary(path: str, sources: dict) -> dict:
+def _summary(path: str, sources: dict, *, align_legacy_population: bool = True) -> dict:
     records = []
     for record in read_jsonl(path):
         source = sources.get(record.record_id)
         if source is None:
             continue
-        source_question_ids = {
-            str(question.get("id", question.get("question_id", "")))
-            for question in source.get("questions", [])
-        }
-        qa_pairs = [
-            qa
-            for qa in record.qa_pairs
-            if qa.question_id in source_question_ids or qa.is_generated_irrelevant
-        ]
-        records.append(record.model_copy(update={"qa_pairs": qa_pairs}))
+        if align_legacy_population:
+            source_question_ids = {
+                str(question.get("id", question.get("question_id", "")))
+                for question in source.get("questions", [])
+            }
+            qa_pairs = [
+                qa
+                for qa in record.qa_pairs
+                if qa.question_id in source_question_ids or qa.is_generated_irrelevant
+            ]
+            record = record.model_copy(update={"qa_pairs": qa_pairs})
+        records.append(record)
     report = audit_records(records, sources)
     report["invalid_spans"] = sum(not atom.span_valid for record in records for atom in record.atoms)
     return report
@@ -46,8 +49,8 @@ def _summary(path: str, sources: dict) -> dict:
 
 def build_report(before: str, after: str, source: str) -> dict:
     sources = load_source_records(source)
-    before_report = _summary(before, sources)
-    after_report = _summary(after, sources)
+    before_report = _summary(before, sources, align_legacy_population=True)
+    after_report = _summary(after, sources, align_legacy_population=False)
     failures = [key for key in REQUIRED_ZERO if after_report.get(key) != 0]
     if after_report.get("answer_preservation_rate") != 1.0:
         failures.append("answer_preservation_rate")

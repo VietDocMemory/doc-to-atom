@@ -3,6 +3,7 @@ import importlib
 import pytest
 
 from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
+from doc_to_atom.atomization.cli import _source_question_id
 from doc_to_atom.atomization.models import QuestionAnnotation, QuestionRoleAnnotation
 
 
@@ -48,6 +49,12 @@ def test_authoritative_set_rejects_duplicate_ids_across_source_and_probes():
     api = _join_api()
     with pytest.raises(api.QuestionJoinError, match="duplicate authoritative question_id: source-q"):
         api.build_authoritative_questions([_source()], [_probe(question_id="source-q")])
+
+
+@pytest.mark.parametrize("source", [{}, {"id": ""}, {"question_id": "   "}])
+def test_source_question_id_is_required_instead_of_synthesized(source):
+    with pytest.raises(ValueError, match="missing question_id"):
+        _source_question_id(source)
 
 
 def test_join_preserves_source_owned_fields_and_applies_only_roles():

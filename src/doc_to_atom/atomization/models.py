@@ -120,6 +120,13 @@ class QuestionAnnotation(BaseModel):
     refusal_target_derived: bool = False
     annotation_warnings: list[str] = Field(default_factory=list)
 
+    @field_validator("question_id")
+    @classmethod
+    def require_question_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question_id must not be empty")
+        return value
+
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_answer(cls, value: Any) -> Any:

@@ -47,6 +47,12 @@ def test_source_owned_fields_are_frozen(field, replacement):
         setattr(qa, field, replacement)
 
 
+@pytest.mark.parametrize("question_id", ["", "   "])
+def test_source_question_id_must_be_present(question_id):
+    with pytest.raises(ValidationError, match="question_id must not be empty"):
+        _question(question_id=question_id)
+
+
 def test_answers_collection_is_immutable():
     qa = _question()
 
