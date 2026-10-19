@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+ATOMIZATION_SCHEMA_VERSION = 2
 
 SemanticType = Literal[
     "fact_claim",
@@ -64,10 +66,24 @@ class Atom(BaseModel):
         return value
 
 
+class TransformationEvent(BaseModel):
+    code: str
+    stage: str
+    message: str
+    question_id: str | None = None
+    atom_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class QuestionAnnotation(BaseModel):
-    question_id: str
-    question: str
-    answer: str | list[str] | None = None
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    question_id: str = Field(frozen=True)
+    question: str = Field(frozen=True)
+    answers: tuple[str, ...] = Field(default_factory=tuple, frozen=True)
+    answer_provenance: Literal["source", "generated_irrelevant", "legacy_unverified"] = (
+        "legacy_unverified"
+    )
     question_type: QuestionType
     gold_atom_ids: list[str] = Field(default_factory=list)
     supporting_atom_ids: list[str] = Field(default_factory=list)
@@ -76,7 +92,34 @@ class QuestionAnnotation(BaseModel):
     is_irrelevant: bool = False
     has_conflict: bool = False
     is_generated_irrelevant: bool = False
+    refusal_target: str | None = None
+    refusal_target_derived: bool = False
     annotation_warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_answer(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "answers" in value or "answer" not in value:
+            return value
+        migrated = dict(value)
+        legacy = migrated.pop("answer")
+        if legacy is None:
+            migrated["answers"] = []
+        elif isinstance(legacy, list):
+            migrated["answers"] = legacy
+        else:
+            migrated["answers"] = [legacy]
+        migrated["answer_provenance"] = "legacy_unverified"
+        return migrated
+
+    @property
+    def answer(self) -> str | list[str] | None:
+        """Read-only compatibility view for schema-v1 consumers."""
+        if not self.answers:
+            return None
+        if len(self.answers) == 1:
+            return self.answers[0]
+        return list(self.answers)
 
 
 class AnnotationMeta(BaseModel):
@@ -89,10 +132,12 @@ class AnnotationMeta(BaseModel):
     num_irrelevant_generated: int = 0
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    transformations: list[TransformationEvent] = Field(default_factory=list)
     prompt_provenance: str = "RECONSTRUCTED_PROMPT_NOT_OFFICIAL"
 
 
 class StructuredRecord(BaseModel):
+    schema_version: Literal[2] = ATOMIZATION_SCHEMA_VERSION
     record_id: str
     dataset: str | None = None
     split: str | None = None
