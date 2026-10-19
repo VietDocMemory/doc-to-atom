@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from doc_to_atom.atomization.models import QuestionAnnotation
+
 try:
     targets = importlib.import_module("doc_to_atom.data.targets")
 except ModuleNotFoundError:

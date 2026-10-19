@@ -1,8 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-import doc_to_atom.atomization.models as models
-import doc_to_atom.atomization.parser as parser
+from doc_to_atom.atomization import models, parser
 
 
 @pytest.mark.parametrize(

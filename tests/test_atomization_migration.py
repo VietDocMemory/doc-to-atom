@@ -1,6 +1,6 @@
+import importlib
 import json
 from types import SimpleNamespace
-import importlib
 
 import pytest
 

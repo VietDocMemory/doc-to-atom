@@ -18,7 +18,7 @@ class RawProviderResponse(BaseModel):
     sha256: str
 
     @classmethod
-    def capture(cls, *, content: str, **metadata) -> "RawProviderResponse":
+    def capture(cls, *, content: str, **metadata) -> RawProviderResponse:
         return cls(
             **metadata,
             content=content,

@@ -7,7 +7,6 @@ from pathlib import Path
 from doc_to_atom.data.io import read_jsonl
 from doc_to_atom.data.semantic_validation import audit_records, load_source_records
 
-
 REQUIRED_ZERO = (
     "errors",
     "answerable_empty_gold",

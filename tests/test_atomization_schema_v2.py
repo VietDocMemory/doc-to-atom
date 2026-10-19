@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-import doc_to_atom.atomization.models as models
+from doc_to_atom.atomization import models
 
 
 def _question(**overrides):

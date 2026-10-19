@@ -4,8 +4,8 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from openai import OpenAI
 

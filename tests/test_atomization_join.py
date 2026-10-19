@@ -2,8 +2,8 @@ import importlib
 
 import pytest
 
-from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
 from doc_to_atom.atomization.cli import _source_question_id
+from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
 from doc_to_atom.atomization.models import QuestionAnnotation, QuestionRoleAnnotation
 
 

@@ -1,7 +1,7 @@
 from copy import deepcopy
 
-from doc_to_atom.atomization.models import Atom, QuestionAnnotation, StructuredRecord
 from doc_to_atom.atomization import validation
+from doc_to_atom.atomization.models import Atom, QuestionAnnotation, StructuredRecord
 
 
 def _atom(atom_id: str) -> Atom:

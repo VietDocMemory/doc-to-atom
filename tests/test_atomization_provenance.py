@@ -2,6 +2,9 @@ import hashlib
 import importlib
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
 from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
 from doc_to_atom.atomization.parser import parse_question_roles_xml
 
@@ -46,10 +49,8 @@ def test_retries_are_retained_as_separate_immutable_attempts():
 
     assert [item.attempt for item in atomizer.last_raw_responses] == [1, 2]
     assert [item.content for item in atomizer.last_raw_responses] == [" first ", " second "]
-    try:
+    with pytest.raises(ValidationError, match="Instance is frozen"):
         atomizer.last_raw_responses[0].content = "mutated"
-    except Exception:
-        pass
     assert atomizer.last_raw_responses[0].content == " first "
 
 
