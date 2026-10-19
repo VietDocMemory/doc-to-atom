@@ -214,18 +214,65 @@ def audit_records(
     records: list[StructuredRecord],
     source_records: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    source_contract_enabled = source_records is not None
     source_records = source_records or {}
-    issues = [
+    record_counts = Counter(record.record_id for record in records)
+    issues: list[dict[str, Any]] = []
+    for record_id, count in record_counts.items():
+        if count > 1:
+            issues.append(
+                {
+                    "record_id": record_id,
+                    "severity": "error",
+                    "code": "duplicate_record_id",
+                    "count": count,
+                }
+            )
+        if source_contract_enabled and record_id not in source_records:
+            issues.append(
+                {
+                    "record_id": record_id,
+                    "severity": "error",
+                    "code": "unknown_record_id",
+                }
+            )
+    if source_contract_enabled:
+        for record_id in source_records.keys() - record_counts.keys():
+            source = source_records[record_id]
+            issues.append(
+                {
+                    "record_id": record_id,
+                    "severity": "error",
+                    "code": "source_record_missing_in_atomized",
+                }
+            )
+            for question in source.get("questions", []):
+                question_id = str(question.get("id", question.get("question_id", "")))
+                if not question_id.strip():
+                    raise ValueError("missing source question_id")
+                issues.append(
+                    {
+                        "record_id": record_id,
+                        "question_id": question_id,
+                        "question": question.get("question", ""),
+                        "severity": "error",
+                        "code": "source_question_missing_in_atomized",
+                    }
+                )
+
+    issues.extend(
         issue
         for record in records
         for issue in audit_record(record, source_records.get(record.record_id))
-    ]
+    )
     codes = Counter(issue["code"] for issue in issues)
     transformations = Counter(
         event.code for record in records for event in record.annotation_meta.transformations
     )
-    source_question_count = sum(
-        len(source_records.get(record.record_id, {}).get("questions", [])) for record in records
+    source_question_count = (
+        sum(len(source.get("questions", [])) for source in source_records.values())
+        if source_contract_enabled
+        else 0
     )
     answer_mismatches = codes["source_answer_mismatch"] + codes[
         "source_question_missing_in_atomized"

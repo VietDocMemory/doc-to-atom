@@ -167,6 +167,10 @@ def migrate_jsonl(
                 raise MigrationError(f"missing source record: {legacy.record_id}")
             migrated.append(migrate_record(legacy, source))
 
+    missing_legacy = next((record_id for record_id in sources if record_id not in seen_legacy), None)
+    if missing_legacy is not None:
+        raise MigrationError(f"missing legacy record: {missing_legacy}")
+
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8", newline="\n") as handle:

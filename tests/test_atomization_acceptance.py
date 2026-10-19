@@ -260,3 +260,31 @@ def test_semantic_audit_hard_fails_missing_source_question_id(monkeypatch):
 
     with pytest.raises(ValueError, match="missing source question_id"):
         semantic_validation.audit_records([_record()], {"r1": source})
+
+
+def test_semantic_audit_requires_exact_source_record_set(monkeypatch):
+    monkeypatch.setitem(
+        preprocessors.DATASET_ADAPTERS,
+        "synthetic_all",
+        preprocessors.DatasetAdapter(
+            preprocess=lambda row: row,
+            grounding_policy="all_answers_verbatim",
+            grounding_note="test",
+        ),
+    )
+    record = _record()
+    unknown = record.model_copy(update={"record_id": "unknown-record"}, deep=True)
+    sources = {
+        "r1": _source(["Exact Gold"]),
+        "missing-record": {**_source(["Exact Gold"]), "id": "missing-record"},
+    }
+
+    report = semantic_validation.audit_records([record, record.model_copy(deep=True), unknown], sources)
+    codes = [issue["code"] for issue in report["issues"]]
+
+    assert "duplicate_record_id" in codes
+    assert "unknown_record_id" in codes
+    assert "source_record_missing_in_atomized" in codes
+    assert report["source_questions"] == 2
+    assert report["source_answer_matches"] == 1
+    assert report["source_answer_mismatches"] == 1

@@ -158,3 +158,18 @@ def test_migrate_jsonl_requires_source_record_and_writes_v2(tmp_path):
     )
     with pytest.raises(migration.MigrationError, match="missing source record: r1"):
         migration.migrate_jsonl(legacy_path, source_path, output_path)
+
+
+def test_migrate_jsonl_rejects_source_record_without_legacy_counterpart(tmp_path):
+    legacy_path = tmp_path / "legacy.jsonl"
+    source_path = tmp_path / "source.jsonl"
+    output_path = tmp_path / "v2.jsonl"
+    legacy_path.write_text(_legacy(_legacy_question()).model_dump_json() + "\n", encoding="utf-8")
+    extra = {**_source(), "id": "source-only"}
+    source_path.write_text(
+        json.dumps(_source()) + "\n" + json.dumps(extra) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(migration.MigrationError, match="missing legacy record: source-only"):
+        migration.migrate_jsonl(legacy_path, source_path, output_path)
