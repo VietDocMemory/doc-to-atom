@@ -8,32 +8,38 @@ from pathlib import Path
 from datasets import load_dataset
 
 
+def group_squad_rows(rows, split: str) -> list[dict]:
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[row["context"]].append(
+            {
+                "id": row["id"],
+                "question": row["question"],
+                "answers": list(row["answers"]["text"]),
+                "question_type": "single_hop",
+            }
+        )
+    return [
+        {
+            "id": f"squad_{split}_{index}",
+            "dataset": "squad",
+            "split": split,
+            "context": context,
+            "questions": questions,
+        }
+        for index, (context, questions) in enumerate(grouped.items())
+    ]
+
+
 def prepare_squad_subset(output: Path, train_rows: int = 16, validation_rows: int = 8) -> dict:
     """Prepare raw real-data inputs; atomization remains an offline MiniMax stage."""
-    train = load_dataset("rajpurkar/squad", split=f"train[:{train_rows}]")
-    validation = load_dataset("rajpurkar/squad", split=f"validation[:{validation_rows}]")
     rows = []
-    for split, dataset in (("train", train), ("validation", validation)):
-        grouped = defaultdict(list)
-        for row in dataset:
-            grouped[row["context"]].append(
-                {
-                    "id": row["id"],
-                    "question": row["question"],
-                    "answer": row["answers"]["text"],
-                    "question_type": "single_hop",
-                }
-            )
-        for index, (context, questions) in enumerate(grouped.items()):
-            rows.append(
-                {
-                    "id": f"squad_{split}_{index}",
-                    "dataset": "squad",
-                    "split": split,
-                    "context": context,
-                    "questions": questions,
-                }
-            )
+    requested = (("train", train_rows), ("validation", validation_rows))
+    for split, count in requested:
+        if count == 0:
+            continue
+        dataset = load_dataset("rajpurkar/squad", split=f"{split}[:{count}]")
+        rows.extend(group_squad_rows(dataset, split))
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8", newline="\n") as handle:
         for row in rows:
