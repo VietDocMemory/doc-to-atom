@@ -14,6 +14,17 @@ from .models import QuestionAnnotation, StructuredRecord
 LOGGER = logging.getLogger(__name__)
 
 
+def _source_answers(item: dict) -> list[str]:
+    value = item["answers"] if "answers" in item else item.get("answer", [])
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list) or any(not isinstance(answer, str) for answer in value):
+        raise ValueError("source answers must be a string or an ordered list of strings")
+    return list(value)
+
+
 def main() -> None:
     load_project_env()
     parser = argparse.ArgumentParser(description="Offline three-stage XML semantic atomization")
@@ -73,8 +84,10 @@ def main() -> None:
                 QuestionAnnotation(
                     question_id=str(item.get("id", f"q_{q_index}")),
                     question=item["question"],
-                    answer=item.get("answer"),
+                    answers=_source_answers(item),
+                    answer_provenance="source",
                     question_type=item.get("question_type", "single_hop"),
+                    is_irrelevant=bool(item.get("is_irrelevant", False)),
                 )
                 for q_index, item in enumerate(raw.get("questions", []))
             ]
