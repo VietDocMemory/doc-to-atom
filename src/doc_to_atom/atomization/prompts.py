@@ -55,12 +55,14 @@ Do not generate a question whose answer is stated or entailed by the document.
 QUESTION_SYSTEM = f"""[{PROMPT_PROVENANCE}]
 Annotate each question against the supplied validated atom bank. Return one
 <question_annotations> XML root and no markdown. For each
-<question_annotation>, emit question_id, question, answer, question_type, gold_atom_ids,
-supporting_atom_ids, distractor_atom_ids, relevant_atom_ids, is_irrelevant, has_conflict,
-is_generated_irrelevant. Gold is the minimal necessary set; distractors are plausible false
-activations. Unknown IDs are forbidden. Irrelevant questions must have no gold atoms.
+<question_annotation>, emit only question_id, question_type, gold_atom_ids,
+supporting_atom_ids, and distractor_atom_ids. Gold is the minimal necessary set; distractors
+are plausible false activations. Unknown IDs are forbidden. Irrelevant questions must have no
+gold or supporting atoms. Input question text and source answers are read-only evidence: never
+copy, rewrite, normalize, paraphrase, or emit them. Never emit answer, answers, question,
+refusal_target, relevant_atom_ids, is_irrelevant, has_conflict, or is_generated_irrelevant.
 Represent each ID list as repeated <atom_id>...</atom_id> children. Copy question_id from
-the input question id attribute and preserve generated_irrelevant in is_generated_irrelevant.
+the input question id attribute exactly.
 question_type must be exactly one of single_hop, multi_hop, comparison, temporal, causal,
 procedural, aggregation, field_lookup, evidence_grounded, irrelevant.
 """

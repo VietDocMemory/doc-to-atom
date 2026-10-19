@@ -75,6 +75,30 @@ class TransformationEvent(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class ParseNotice(BaseModel):
+    severity: Literal["warning", "error"]
+    code: str
+    message: str
+    element_index: int | None = None
+
+
+class QuestionRoleAnnotation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str
+    question_type: QuestionType | None = None
+    gold_atom_ids: tuple[str, ...] = Field(default_factory=tuple)
+    supporting_atom_ids: tuple[str, ...] = Field(default_factory=tuple)
+    distractor_atom_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+    @field_validator("question_id")
+    @classmethod
+    def nonempty_question_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question_id must not be empty")
+        return value.strip()
+
+
 class QuestionAnnotation(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
