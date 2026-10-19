@@ -12,6 +12,7 @@ from torch.nn import functional as F
 from transformers import get_cosine_schedule_with_warmup
 
 from doc_to_atom.atomization.models import StructuredRecord
+from doc_to_atom.data.targets import resolve_target
 from doc_to_atom.compiler.memory import MemoryBank
 from doc_to_atom.config import config_fingerprint
 from doc_to_atom.losses.objectives import (
@@ -158,7 +159,8 @@ def _memory(system, tokenizer, record: StructuredRecord, config: dict) -> Memory
 def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     device = _model_device(system)
     stage = stage_for_step(step)
-    answer = "unanswerable" if qa.is_irrelevant else _answer_text(qa.answer)
+    target_value = resolve_target(qa)
+    answer = target_value.text
     if not answer:
         raise ValueError(f"{record.record_id}/{qa.question_id}: missing answer")
 
@@ -291,6 +293,7 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         "token_accuracy": float((predicted_ids == answer_ids).float().mean()),
         "prediction": _decode(tokenizer, predicted_ids.tolist()),
         "target": answer,
+        "target_provenance": target_value.provenance,
         "stage1_candidate_count": int(student.router.stage1_indices.numel()),
         "final_top_k": int(student.router.selected_indices.numel()),
     }

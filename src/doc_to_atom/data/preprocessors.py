@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
+
+GroundingPolicy = Literal["all_answers_verbatim", "any_answer_verbatim", "not_required"]
+
+
+@dataclass(frozen=True)
+class DatasetAdapter:
+    preprocess: Callable[[dict[str, Any]], dict[str, Any]]
+    grounding_policy: GroundingPolicy
+    grounding_note: str
 
 
 def _answers(value: Any) -> list[str]:
@@ -54,19 +64,30 @@ def longbench(row: dict[str, Any]) -> dict[str, Any]:
     return {"context": row["context"], "question": row["input"], "answers": _answers(row.get("answers"))}
 
 
-DATASET_PREPROCESSORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    "squad": squad,
-    "drop": drop,
-    "ropes": ropes,
-    "2wikimultihopqa": wiki2,
-    "qasper": qasper,
-    "longbench": longbench,
+DATASET_ADAPTERS: dict[str, DatasetAdapter] = {
+    "squad": DatasetAdapter(squad, "all_answers_verbatim", "SQuAD supplies extractive spans."),
+    "drop": DatasetAdapter(drop, "not_required", "DROP may require arithmetic derivation."),
+    "ropes": DatasetAdapter(ropes, "not_required", "Extractive coverage is not yet certified."),
+    "2wikimultihopqa": DatasetAdapter(
+        wiki2, "not_required", "Extractive coverage is not yet certified."
+    ),
+    "qasper": DatasetAdapter(qasper, "not_required", "QASPER includes non-extractive answers."),
+    "longbench": DatasetAdapter(longbench, "not_required", "LongBench mixes task semantics."),
 }
+
+# Backward-compatible callable registry; policy ownership remains on DATASET_ADAPTERS.
+DATASET_PREPROCESSORS = {name: adapter.preprocess for name, adapter in DATASET_ADAPTERS.items()}
+
+
+def get_dataset_adapter(dataset: str | None) -> DatasetAdapter:
+    if dataset is None:
+        return DatasetAdapter(lambda row: row, "not_required", "No dataset adapter declared.")
+    try:
+        return DATASET_ADAPTERS[dataset.lower()]
+    except KeyError as exc:
+        raise ValueError(f"unsupported paper dataset {dataset}") from exc
 
 
 def preprocess_dataset_row(dataset: str, row: dict[str, Any]) -> dict[str, Any]:
-    try:
-        return DATASET_PREPROCESSORS[dataset.lower()](row)
-    except KeyError as exc:
-        raise ValueError(f"unsupported paper dataset {dataset}") from exc
+    return get_dataset_adapter(dataset).preprocess(row)
 

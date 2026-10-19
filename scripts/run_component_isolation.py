@@ -15,6 +15,7 @@ from torch.nn import functional as F
 from doc_to_atom.config import load_config, load_project_env
 from doc_to_atom.data.io import read_jsonl, validate_jsonl
 from doc_to_atom.data.semantic_validation import audit_records
+from doc_to_atom.data.targets import resolve_target
 from doc_to_atom.evaluation.metrics import rouge_l, word_f1
 from doc_to_atom.training.checkpoint import load_checkpoint
 from doc_to_atom.training.factory import build_system
@@ -164,7 +165,7 @@ def main() -> None:
             bank = _memory(system, tokenizer, record, config)
             atom_index = {atom.atom_id: index for index, atom in enumerate(record.atoms)}
             for qa in [item for item in record.qa_pairs if not item.is_irrelevant]:
-                answer = _answer_text(qa.answer)
+                answer = resolve_target(qa).text
                 gold_indices = torch.tensor(
                     [atom_index[atom_id] for atom_id in qa.gold_atom_ids], device=device
                 )

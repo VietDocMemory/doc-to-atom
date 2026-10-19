@@ -4,6 +4,11 @@
 |---|---|
 | Appendix B atom schemas, relations and QA types | `atomization/models.py` |
 | MiniMax three-pass annotation and recovery policy | `atomization/client.py`, `parser.py`, `validation.py` |
+| Schema-v2 source-owned questions and role-only provider DTO | `atomization/models.py`, `question_join.py` |
+| Source-authoritative legacy migration | `atomization/migration.py`, `migration_cli.py` |
+| Raw provider-response provenance | `atomization/provenance.py` |
+| Dataset-owned answer-grounding policy and semantic acceptance gates | `data/preprocessors.py`, `data/semantic_validation.py` |
+| Derived answer/refusal target policy | `data/targets.py` |
 | Shared frozen first-four-layer encoder and mean pool | `encoder/shared.py` |
 | Projection and compiler heads | `compiler/model.py`, `compiler/memory.py` |
 | Stage-1 cosine retrieval, metadata and frozen BGE reranking | `router/model.py`, `router/reranker.py` |

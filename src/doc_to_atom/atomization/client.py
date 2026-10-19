@@ -3,13 +3,21 @@ from __future__ import annotations
 import os
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from openai import OpenAI
 
 from .models import AnnotationMeta, QuestionAnnotation, StructuredRecord
-from .parser import parse_atoms_xml, parse_questions_xml
+from .parser import parse_atoms_xml, parse_question_roles_xml
 from .prompts import DATASET_ADAPTERS, DECOMPOSITION_SYSTEM, IRRELEVANT_SYSTEM, QUESTION_SYSTEM
+from .provenance import RawProviderResponse
+from .question_join import (
+    QuestionJoinError,
+    build_authoritative_questions,
+    join_question_roles,
+)
 from .validation import validate_record
 
 
@@ -56,9 +64,13 @@ class ThreeStageXMLAtomizer:
         self.provider = provider
         self.resolved_model = config.model
         self.last_errors: list[str] = []
+        self.last_raw_responses: list[RawProviderResponse] = []
+        self.response_sink: Callable[[RawProviderResponse], None] | None = None
+        self._active_record_id = ""
+        self._stage_attempts: Counter[str] = Counter()
         self.client = OpenAI(api_key=config.api_key, base_url=base_url)
 
-    def _call(self, system: str, user: str) -> str:
+    def _request(self, system: str, user: str) -> str:
         response = self.client.chat.completions.create(
             model=self.config.model,
             temperature=self.config.temperature,
@@ -68,10 +80,67 @@ class ThreeStageXMLAtomizer:
         self.resolved_model = response.model
         return response.choices[0].message.content or ""
 
+    def _begin_record(self, record_id: str) -> None:
+        self._active_record_id = record_id
+        self._stage_attempts = Counter()
+        self.last_raw_responses = []
+
+    def _call(self, stage: str, system: str, user: str) -> str:
+        content = self._request(system, user)
+        self._stage_attempts[stage] += 1
+        captured = RawProviderResponse.capture(
+            record_id=self._active_record_id,
+            stage=stage,
+            attempt=self._stage_attempts[stage],
+            provider=self.provider,
+            model=self.resolved_model,
+            content=content,
+        )
+        self.last_raw_responses.append(captured)
+        if self.response_sink is not None:
+            self.response_sink(captured)
+        return content
+
     @staticmethod
     def _span_is_verbatim(span: str, context: str) -> bool:
         normalize = lambda value: re.sub(r"\s+", " ", value).strip()
         return normalize(span) in normalize(context)
+
+    @staticmethod
+    def _document_xml(context: str) -> str:
+        root = ET.Element("document")
+        root.text = context
+        return ET.tostring(root, encoding="unicode")
+
+    @staticmethod
+    def _annotation_input_xml(
+        atoms, questions: tuple[QuestionAnnotation, ...]
+    ) -> tuple[str, str]:
+        atom_root = ET.Element("atoms")
+        for atom in atoms:
+            node = ET.SubElement(atom_root, "atom", {"id": atom.atom_id})
+            ET.SubElement(node, "content").text = atom.content
+            ET.SubElement(node, "retrieval_text").text = atom.retrieval_text
+
+        question_root = ET.Element("questions")
+        for qa in questions:
+            node = ET.SubElement(
+                question_root,
+                "question",
+                {
+                    "id": qa.question_id,
+                    "is_irrelevant": str(qa.is_irrelevant).lower(),
+                    "generated_irrelevant": str(qa.is_generated_irrelevant).lower(),
+                },
+            )
+            ET.SubElement(node, "text").text = qa.question
+            answers = ET.SubElement(node, "source_answers", {"read_only": "true"})
+            for answer in qa.answers:
+                ET.SubElement(answers, "answer").text = answer
+        return (
+            ET.tostring(atom_root, encoding="unicode"),
+            ET.tostring(question_root, encoding="unicode"),
+        )
 
     def atomize(
         self,
@@ -83,9 +152,11 @@ class ThreeStageXMLAtomizer:
     ) -> StructuredRecord | None:
         meta = AnnotationMeta()
         self.last_errors = []
+        self._begin_record(record_id)
         adapter = DATASET_ADAPTERS.get((dataset or "").lower(), "")
         try:
-            xml = self._call(DECOMPOSITION_SYSTEM, f"{adapter}\n<document>{context}</document>")
+            document_xml = self._document_xml(context)
+            xml = self._call("decomposition", DECOMPOSITION_SYSTEM, f"{adapter}\n{document_xml}")
             atoms, warnings = parse_atoms_xml(xml)
             invalid_spans = [
                 atom.source_span
@@ -100,8 +171,9 @@ class ThreeStageXMLAtomizer:
                     "ellipsis. Invalid previous spans:\n- " + "\n- ".join(invalid_spans)
                 )
                 xml = self._call(
+                    "decomposition",
                     DECOMPOSITION_SYSTEM + repair,
-                    f"{adapter}\n<document>{context}</document>",
+                    f"{adapter}\n{document_xml}",
                 )
                 atoms, warnings = parse_atoms_xml(xml)
             meta.warnings.extend(warnings)
@@ -115,19 +187,22 @@ class ThreeStageXMLAtomizer:
             self.last_errors = list(meta.errors)
             return None
 
-        augmented = list(questions)
+        generated_probes: list[QuestionAnnotation] = []
         try:
             xml = self._call(
+                "irrelevant_probe",
                 IRRELEVANT_SYSTEM,
-                f"Generate {self.config.irrelevant_probe_count} probes.\n<document>{context}</document>",
+                f"Generate {self.config.irrelevant_probe_count} probes.\n{document_xml}",
             )
             root = ET.fromstring(xml)
             for index, node in enumerate(root.iter("question")):
                 if node.text:
-                    augmented.append(
+                    generated_probes.append(
                         QuestionAnnotation(
                             question_id=f"generated_irrelevant_{index}",
                             question=node.text.strip(),
+                            answers=[],
+                            answer_provenance="generated_irrelevant",
                             question_type="irrelevant",
                             is_irrelevant=True,
                             is_generated_irrelevant=True,
@@ -137,25 +212,29 @@ class ThreeStageXMLAtomizer:
             meta.irrelevant_parse_status = "failed_ignored"
             meta.warnings.append(f"irrelevant probe generation failed: {exc}")
 
-        atom_xml = "\n".join(
-            f'<atom id="{a.atom_id}"><content>{a.content}</content><retrieval_text>{a.retrieval_text}</retrieval_text></atom>'
-            for a in atoms
-        )
-        question_xml = "\n".join(
-            f'<question id="{q.question_id}" generated_irrelevant="{str(q.is_generated_irrelevant).lower()}">{q.question}</question>'
-            for q in augmented
-        )
         try:
+            authoritative = build_authoritative_questions(questions, generated_probes)
+            atom_xml, question_xml = self._annotation_input_xml(atoms, authoritative)
             xml = self._call(
+                "question_annotation",
                 QUESTION_SYSTEM,
-                f"{adapter}\n<atoms>{atom_xml}</atoms>\n<questions>{question_xml}</questions>",
+                f"{adapter}\n{atom_xml}\n{question_xml}",
             )
-            annotated, warnings = parse_questions_xml(xml)
-            meta.warnings.extend(warnings)
-        except Exception as exc:  # noqa: BLE001 -- preserve atom-only records on annotation failure.
-            meta.question_parse_status = "failed_atom_only"
-            meta.warnings.append(f"question annotation failed: {exc}")
-            annotated = []  # Appendix B: keep atom-only record.
+            roles, notices = parse_question_roles_xml(xml)
+            for notice in notices:
+                message = f"{notice.code}: {notice.message}"
+                if notice.severity == "error":
+                    meta.errors.append(message)
+                else:
+                    meta.warnings.append(message)
+            if any(notice.severity == "error" for notice in notices):
+                raise QuestionJoinError("provider question annotation failed contract parsing")
+            annotated = join_question_roles(authoritative, roles)
+        except Exception as exc:  # noqa: BLE001 -- reject incomplete/corrupt QA records.
+            meta.question_parse_status = "failed"
+            meta.errors.append(f"question annotation failed: {exc}")
+            self.last_errors = list(meta.errors)
+            return None
 
         record = StructuredRecord(
             record_id=record_id,

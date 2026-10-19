@@ -15,6 +15,7 @@ from doc_to_atom.compiler.memory import MemoryBank
 from doc_to_atom.composer.model import ComposedMemory
 from doc_to_atom.config import load_config, load_project_env
 from doc_to_atom.data.io import read_jsonl, validate_jsonl
+from doc_to_atom.data.targets import resolve_target
 from doc_to_atom.evaluation.metrics import refusal_f1, rouge_l, word_f1
 from doc_to_atom.training.factory import build_system
 from doc_to_atom.training.loop import _answer_logits, _causal_example, _tokenize
@@ -339,7 +340,7 @@ def _train_compiler(
                 atom_inputs,
                 record,
                 gold_index,
-                answer_qa.answer if isinstance(answer_qa.answer, str) else answer_qa.answer[0],
+                resolve_target(answer_qa).text,
                 answer_teacher,
                 config,
             )
@@ -384,7 +385,7 @@ def main() -> None:
         raise ValueError("diagnostic record must belong to train split")
     answer_qa = next(qa for qa in record.qa_pairs if not qa.is_irrelevant)
     irrelevant_qa = next(qa for qa in record.qa_pairs if qa.is_generated_irrelevant)
-    answer = _answer_text(answer_qa.answer)
+    answer = resolve_target(answer_qa).text
     if len(answer_qa.gold_atom_ids) != 1:
         raise ValueError("this controlled run requires exactly one gold atom")
 

@@ -10,8 +10,27 @@ from doc_to_atom.config import load_project_env
 
 from .client import MiniMaxAtomizer, MiniMaxConfig, OpenAIAtomizer, OpenAIConfig
 from .models import QuestionAnnotation, StructuredRecord
+from .provenance import write_raw_response_jsonl
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _source_answers(item: dict) -> list[str]:
+    value = item["answers"] if "answers" in item else item.get("answer", [])
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list) or any(not isinstance(answer, str) for answer in value):
+        raise ValueError("source answers must be a string or an ordered list of strings")
+    return list(value)
+
+
+def _source_question_id(item: dict) -> str:
+    value = item.get("id", item.get("question_id"))
+    if value is None or not str(value).strip():
+        raise ValueError("source question is missing question_id")
+    return str(value)
 
 
 def main() -> None:
@@ -19,6 +38,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Offline three-stage XML semantic atomization")
     parser.add_argument("--input", required=True, help="JSONL with id, context, questions")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--raw-responses",
+        help="Append-only raw provider response JSONL (default: <output>.raw-responses.jsonl)",
+    )
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -42,6 +65,11 @@ def main() -> None:
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    raw_responses = Path(args.raw_responses or f"{output}.raw-responses.jsonl")
+    if not args.resume:
+        raw_responses.parent.mkdir(parents=True, exist_ok=True)
+        raw_responses.open("w", encoding="utf-8").close()
+    atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_responses)
     cached_ids: set[str] = set()
     retained_lines: list[str] = []
     if args.resume and output.exists():
@@ -71,12 +99,14 @@ def main() -> None:
                 continue
             questions = [
                 QuestionAnnotation(
-                    question_id=str(item.get("id", f"q_{q_index}")),
+                    question_id=_source_question_id(item),
                     question=item["question"],
-                    answer=item.get("answer"),
+                    answers=_source_answers(item),
+                    answer_provenance="source",
                     question_type=item.get("question_type", "single_hop"),
+                    is_irrelevant=bool(item.get("is_irrelevant", False)),
                 )
-                for q_index, item in enumerate(raw.get("questions", []))
+                for item in raw.get("questions", [])
             ]
             record = atomizer.atomize(
                 record_id,

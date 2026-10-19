@@ -4,7 +4,7 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 
-from .models import Atom, QuestionAnnotation, Relation
+from .models import Atom, ParseNotice, QuestionRoleAnnotation, Relation
 
 
 def _recover_elements(xml: str, tag: str) -> Iterable[ET.Element]:
@@ -99,26 +99,49 @@ def parse_atoms_xml(xml: str) -> tuple[list[Atom], list[str]]:
     return atoms, warnings
 
 
-def parse_questions_xml(xml: str) -> tuple[list[QuestionAnnotation], list[str]]:
-    questions: list[QuestionAnnotation] = []
-    warnings: list[str] = []
+def parse_question_roles_xml(xml: str) -> tuple[list[QuestionRoleAnnotation], list[ParseNotice]]:
+    annotations: list[QuestionRoleAnnotation] = []
+    notices: list[ParseNotice] = []
+    forbidden = {"answer", "answers", "question", "refusal_target"}
     for index, node in enumerate(_recover_elements(xml, "question_annotation")):
+        present = sorted(
+            forbidden.intersection(node.attrib).union(
+                child.tag for child in list(node) if child.tag in forbidden
+            )
+        )
+        if present:
+            notices.append(
+                ParseNotice(
+                    severity="error",
+                    code="FORBIDDEN_ANNOTATION_FIELD",
+                    message=f"provider annotation contains forbidden fields: {', '.join(present)}",
+                    element_index=index,
+                )
+            )
+            continue
         try:
-            questions.append(
-                QuestionAnnotation(
-                    question_id=(node.get("id") or _value(node, "question_id") or f"q_{index}"),
-                    question=_value(node, "question"),
-                    answer=_value(node, "answer") or None,
-                    question_type=_value(node, "question_type"),
-                    gold_atom_ids=_ids(node, "gold_atom_ids"),
-                    supporting_atom_ids=_ids(node, "supporting_atom_ids"),
-                    distractor_atom_ids=_ids(node, "distractor_atom_ids"),
-                    relevant_atom_ids=_ids(node, "relevant_atom_ids"),
-                    is_irrelevant=_bool(_value(node, "is_irrelevant")),
-                    has_conflict=_bool(_value(node, "has_conflict")),
-                    is_generated_irrelevant=_bool(_value(node, "is_generated_irrelevant")),
+            question_type = _value(node, "question_type") or None
+            annotations.append(
+                QuestionRoleAnnotation(
+                    question_id=node.get("id") or _value(node, "question_id"),
+                    question_type=question_type,
+                    gold_atom_ids=tuple(_ids(node, "gold_atom_ids")),
+                    supporting_atom_ids=tuple(_ids(node, "supporting_atom_ids")),
+                    distractor_atom_ids=tuple(_ids(node, "distractor_atom_ids")),
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- malformed generated elements are isolated.
-            warnings.append(f"question[{index}] dropped: {exc}")
-    return questions, warnings
+            notices.append(
+                ParseNotice(
+                    severity="error",
+                    code="QUESTION_ANNOTATION_PARSE_ERROR",
+                    message=f"question[{index}] dropped: {exc}",
+                    element_index=index,
+                )
+            )
+    return annotations, notices
+
+
+def parse_questions_xml(xml: str) -> tuple[list[QuestionRoleAnnotation], list[ParseNotice]]:
+    """Deprecated compatibility name for the schema-v2 role-only parser."""
+    return parse_question_roles_xml(xml)

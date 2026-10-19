@@ -23,7 +23,7 @@ def main() -> None:
             if qa.question_id == "56d9895ddc89441400fdb50e":
                 if qa.question != "The name of the NFL championship game is?":
                     raise ValueError("reviewed question precondition no longer holds")
-                if qa.answer != "Super Bowl" or qa.is_irrelevant:
+                if qa.answers != ("Super Bowl",) or qa.is_irrelevant:
                     raise ValueError("reviewed answer/relevance precondition no longer holds")
                 qa.gold_atom_ids = ["atom_1"]
                 qa.relevant_atom_ids = ["atom_1", *qa.supporting_atom_ids]

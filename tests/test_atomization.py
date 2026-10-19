@@ -21,14 +21,13 @@ def test_atom_xml_parser_recovers_partial_response():
 
 
 def test_question_xml_parser():
-    xml = """<root><question_annotation id="q0"><question>Where?</question>
+    xml = """<root><question_annotation id="q0">
     <question_type>single_hop</question_type><gold_atom_ids><atom_id>atom_0</atom_id></gold_atom_ids>
     <supporting_atom_ids></supporting_atom_ids><distractor_atom_ids>atom_1</distractor_atom_ids>
-    <is_irrelevant>false</is_irrelevant><has_conflict>false</has_conflict>
-    <is_generated_irrelevant>false</is_generated_irrelevant></question_annotation></root>"""
+    </question_annotation></root>"""
     questions, warnings = parse_questions_xml(xml)
-    assert questions[0].gold_atom_ids == ["atom_0"]
-    assert questions[0].distractor_atom_ids == ["atom_1"]
+    assert questions[0].gold_atom_ids == ("atom_0",)
+    assert questions[0].distractor_atom_ids == ("atom_1",)
     assert not warnings
 
 
@@ -42,13 +41,12 @@ def test_openai_attribute_xml_and_abstraction_repair():
     assert "normalized abstraction_level" in atom_warnings[0]
 
     question_xml = """<question_annotations><question_annotation question_id="q1"
-    question="What?" answer="A fact" question_type="single_hop" gold_atom_ids="a1"
-    is_irrelevant="false" has_conflict="false" is_generated_irrelevant="false"/>
+    question_type="single_hop" gold_atom_ids="a1"/>
     </question_annotations>"""
     questions, warnings = parse_questions_xml(question_xml)
     assert not warnings
     assert questions[0].question_id == "q1"
-    assert questions[0].gold_atom_ids == ["a1"]
+    assert questions[0].gold_atom_ids == ("a1",)
 
 
 def test_span_and_question_cross_validation():
