@@ -16,6 +16,7 @@ from doc_to_atom.config import (
 )
 from doc_to_atom.data.io import read_jsonl, validate_jsonl
 from doc_to_atom.data.semantic_validation import audit_records
+from doc_to_atom.data.targets import resolve_target
 from doc_to_atom.evaluation.baselines import BaseQueryOnly, BaseWithContext
 from doc_to_atom.evaluation.metrics import refusal_f1, rouge_l, word_f1
 from doc_to_atom.inference.query import QueryEngine
@@ -96,7 +97,7 @@ def _evaluate_base(system, tokenizer, records, method: str, max_new_tokens: int)
             prediction = baseline.answer(record.context, qa.question).strip()
             _sync()
             latency = (time.perf_counter() - started) * 1000
-            target = "unanswerable" if qa.is_irrelevant else _answer_text(qa.answer)
+            target = resolve_target(qa).text
             rows.append(
                 {
                     "method": method,
@@ -156,7 +157,7 @@ def _evaluate_doc2atom(system, tokenizer, records, config):
             _sync()
             latency = (time.perf_counter() - started) * 1000
             prediction = result["prediction"].strip()
-            target = "unanswerable" if qa.is_irrelevant else _answer_text(qa.answer)
+            target = resolve_target(qa).text
             route = (None, None, None, None)
             if not qa.is_irrelevant:
                 route = _routing_metrics(result["ranked_atom_ids"], qa.gold_atom_ids)
