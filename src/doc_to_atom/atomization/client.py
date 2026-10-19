@@ -3,13 +3,16 @@ from __future__ import annotations
 import os
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass
+from typing import Callable
 
 from openai import OpenAI
 
 from .models import AnnotationMeta, QuestionAnnotation, StructuredRecord
 from .parser import parse_atoms_xml, parse_question_roles_xml
 from .prompts import DATASET_ADAPTERS, DECOMPOSITION_SYSTEM, IRRELEVANT_SYSTEM, QUESTION_SYSTEM
+from .provenance import RawProviderResponse
 from .question_join import (
     QuestionJoinError,
     build_authoritative_questions,
@@ -61,9 +64,13 @@ class ThreeStageXMLAtomizer:
         self.provider = provider
         self.resolved_model = config.model
         self.last_errors: list[str] = []
+        self.last_raw_responses: list[RawProviderResponse] = []
+        self.response_sink: Callable[[RawProviderResponse], None] | None = None
+        self._active_record_id = ""
+        self._stage_attempts: Counter[str] = Counter()
         self.client = OpenAI(api_key=config.api_key, base_url=base_url)
 
-    def _call(self, system: str, user: str) -> str:
+    def _request(self, system: str, user: str) -> str:
         response = self.client.chat.completions.create(
             model=self.config.model,
             temperature=self.config.temperature,
@@ -72,6 +79,27 @@ class ThreeStageXMLAtomizer:
         )
         self.resolved_model = response.model
         return response.choices[0].message.content or ""
+
+    def _begin_record(self, record_id: str) -> None:
+        self._active_record_id = record_id
+        self._stage_attempts = Counter()
+        self.last_raw_responses = []
+
+    def _call(self, stage: str, system: str, user: str) -> str:
+        content = self._request(system, user)
+        self._stage_attempts[stage] += 1
+        captured = RawProviderResponse.capture(
+            record_id=self._active_record_id,
+            stage=stage,
+            attempt=self._stage_attempts[stage],
+            provider=self.provider,
+            model=self.resolved_model,
+            content=content,
+        )
+        self.last_raw_responses.append(captured)
+        if self.response_sink is not None:
+            self.response_sink(captured)
+        return content
 
     @staticmethod
     def _span_is_verbatim(span: str, context: str) -> bool:
@@ -124,10 +152,11 @@ class ThreeStageXMLAtomizer:
     ) -> StructuredRecord | None:
         meta = AnnotationMeta()
         self.last_errors = []
+        self._begin_record(record_id)
         adapter = DATASET_ADAPTERS.get((dataset or "").lower(), "")
         try:
             document_xml = self._document_xml(context)
-            xml = self._call(DECOMPOSITION_SYSTEM, f"{adapter}\n{document_xml}")
+            xml = self._call("decomposition", DECOMPOSITION_SYSTEM, f"{adapter}\n{document_xml}")
             atoms, warnings = parse_atoms_xml(xml)
             invalid_spans = [
                 atom.source_span
@@ -142,6 +171,7 @@ class ThreeStageXMLAtomizer:
                     "ellipsis. Invalid previous spans:\n- " + "\n- ".join(invalid_spans)
                 )
                 xml = self._call(
+                    "decomposition",
                     DECOMPOSITION_SYSTEM + repair,
                     f"{adapter}\n{document_xml}",
                 )
@@ -160,6 +190,7 @@ class ThreeStageXMLAtomizer:
         generated_probes: list[QuestionAnnotation] = []
         try:
             xml = self._call(
+                "irrelevant_probe",
                 IRRELEVANT_SYSTEM,
                 f"Generate {self.config.irrelevant_probe_count} probes.\n{document_xml}",
             )
@@ -185,6 +216,7 @@ class ThreeStageXMLAtomizer:
             authoritative = build_authoritative_questions(questions, generated_probes)
             atom_xml, question_xml = self._annotation_input_xml(atoms, authoritative)
             xml = self._call(
+                "question_annotation",
                 QUESTION_SYSTEM,
                 f"{adapter}\n{atom_xml}\n{question_xml}",
             )

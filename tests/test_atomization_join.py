@@ -121,7 +121,7 @@ class _FakeAtomizer(ThreeStageXMLAtomizer):
         self.responses = iter(responses)
         self.users = []
 
-    def _call(self, system: str, user: str) -> str:
+    def _request(self, system: str, user: str) -> str:
         self.users.append(user)
         return next(self.responses)
 

@@ -10,6 +10,7 @@ from doc_to_atom.config import load_project_env
 
 from .client import MiniMaxAtomizer, MiniMaxConfig, OpenAIAtomizer, OpenAIConfig
 from .models import QuestionAnnotation, StructuredRecord
+from .provenance import write_raw_response_jsonl
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Offline three-stage XML semantic atomization")
     parser.add_argument("--input", required=True, help="JSONL with id, context, questions")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--raw-responses",
+        help="Append-only raw provider response JSONL (default: <output>.raw-responses.jsonl)",
+    )
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -53,6 +58,11 @@ def main() -> None:
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    raw_responses = Path(args.raw_responses or f"{output}.raw-responses.jsonl")
+    if not args.resume:
+        raw_responses.parent.mkdir(parents=True, exist_ok=True)
+        raw_responses.open("w", encoding="utf-8").close()
+    atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_responses)
     cached_ids: set[str] = set()
     retained_lines: list[str] = []
     if args.resume and output.exists():
