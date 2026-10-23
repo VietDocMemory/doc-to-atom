@@ -166,3 +166,58 @@ def test_tracker_offline_logs_config_manifests_and_checkpoints_locally(tmp_path:
     assert initialized_modes == ["offline"]
     assert [event["event"] for event in events] == ["config", "artifact", "artifact"]
 
+
+def test_best_weights_artifact_excludes_full_checkpoint_and_raw_responses(tmp_path: Path):
+    class CapturingRun(_FakeRun):
+        def __init__(self):
+            super().__init__()
+            self.artifacts = []
+
+        def log_artifact(self, artifact, aliases=None):
+            self.artifacts.append((artifact, aliases))
+
+    context = run_module.RunContext.create(tmp_path / "run", config=_config(), command=["train"])
+    fake_run = CapturingRun()
+    tracker = tracking_module.RunTracker.create(
+        context, mode="offline", project="tests", initializer=lambda **kwargs: fake_run
+    )
+    checkpoint = context.root / "checkpoints" / "step-00000007"
+    checkpoint.mkdir()
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+    (checkpoint / "training.pt").write_bytes(b"optimizer")
+    (checkpoint / "rng.safetensors").write_bytes(b"rng")
+    (checkpoint / "probe.raw-responses.jsonl").write_text("private")
+
+    tracker.log_best_weights(checkpoint, optimizer_step=7)
+
+    assert len(fake_run.artifacts) == 1
+    artifact, aliases = fake_run.artifacts[0]
+    assert aliases == ["best"]
+    assert set(artifact.manifest.entries) == {
+        "model.safetensors", "config/resolved.yaml", "manifests/run.json"
+    }
+    assert artifact.metadata["optimizer_step"] == 7
+
+
+def test_best_weights_artifact_selects_distributed_portable_model(tmp_path: Path):
+    class CapturingRun(_FakeRun):
+        def log_artifact(self, artifact, aliases=None):
+            self.artifact = artifact
+
+    context = run_module.RunContext.create(tmp_path / "run", config=_config(), command=["train"])
+    fake_run = CapturingRun()
+    tracker = tracking_module.RunTracker.create(
+        context, mode="offline", project="tests", initializer=lambda **kwargs: fake_run
+    )
+    checkpoint = context.root / "checkpoints" / "step-00000008"
+    (checkpoint / "portable").mkdir(parents=True)
+    (checkpoint / "accelerate").mkdir()
+    (checkpoint / "portable" / "model.safetensors").write_bytes(b"portable weights")
+    (checkpoint / "accelerate" / "optimizer.bin").write_bytes(b"do not upload")
+
+    tracker.log_best_weights(checkpoint, optimizer_step=8)
+
+    assert set(fake_run.artifact.manifest.entries) == {
+        "model.safetensors", "config/resolved.yaml", "manifests/run.json"
+    }
+

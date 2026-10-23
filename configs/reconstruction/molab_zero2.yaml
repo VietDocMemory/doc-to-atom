@@ -32,7 +32,10 @@ runtime:
   gradient_checkpointing: false
   flash_attention_2: auto
   wandb_mode: offline
+  checkpoint_upload: best_weights
 training:
+  checkpoint_retention: best_last
+  checkpoint_every_steps: 1000
   effective_global_batch: 128
   micro_batch_size: 1
   gradient_accumulation_steps: 16

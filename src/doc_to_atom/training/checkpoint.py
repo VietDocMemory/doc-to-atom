@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
 import tempfile
 import uuid
@@ -20,6 +21,7 @@ from .state import TrainerState
 
 SCHEMA_VERSION = 2
 COMMIT_MARKER = "COMMITTED"
+_STEP_DIRECTORY = re.compile(r"step-[0-9]{8,}\Z")
 
 
 class CheckpointError(RuntimeError):
@@ -369,6 +371,90 @@ def publish_checkpoint_pointer(
     )
 
 
+def verify_committed_checkpoint(
+    path: str | Path, *, optimizer_step: int, distributed: bool
+) -> None:
+    """Check the committed checkpoint structure before it replaces a live pointer."""
+    checkpoint = Path(path).resolve()
+    required = ["COMMITTED", "state.json"]
+    if distributed:
+        required += [
+            "distributed.json", "portable/COMMITTED", "portable/model.safetensors",
+            "portable/training.pt", "portable/rng.json", "portable/rng.safetensors",
+        ]
+    else:
+        required += [
+            "model.safetensors", "modules.json", "training.pt", "rng.json",
+            "rng.safetensors",
+        ]
+    if not checkpoint.is_dir() or any(
+        not (checkpoint / name).is_file() or (checkpoint / name).stat().st_size == 0
+        for name in required
+    ):
+        raise CheckpointError(f"checkpoint is incomplete: {checkpoint}")
+    try:
+        state = TrainerState.from_dict(json.loads((checkpoint / "state.json").read_text()))
+    except (OSError, ValueError, TypeError) as exc:
+        raise CheckpointError(f"invalid checkpoint state: {checkpoint}") from exc
+    if state.schema_version != SCHEMA_VERSION or state.optimizer_step != optimizer_step:
+        raise CheckpointError(f"checkpoint step or schema mismatch: {checkpoint}")
+    if distributed and not any(
+        item.is_file() and item.stat().st_size > 0
+        for item in (checkpoint / "accelerate").rglob("*")
+    ):
+        raise CheckpointError(f"distributed checkpoint has no Accelerate state: {checkpoint}")
+
+
+def _pointer_target(checkpoint_dir: Path, name: str) -> Path | None:
+    pointer = checkpoint_dir / f"{name}.json"
+    if not pointer.exists():
+        return None
+    try:
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+        basename = payload["path"]
+        step = payload["optimizer_step"]
+        if not isinstance(basename, str) or not _STEP_DIRECTORY.fullmatch(basename):
+            raise ValueError("pointer path must be a step directory basename")
+        if type(step) is not int:
+            raise ValueError("pointer step must be an integer")
+        candidate = checkpoint_dir / basename
+        target = candidate.resolve()
+        if candidate.is_symlink() or target.parent != checkpoint_dir:
+            raise ValueError("pointer target escapes checkpoint directory")
+        verify_committed_checkpoint(
+            target, optimizer_step=step,
+            distributed=(target / "distributed.json").exists(),
+        )
+        return target
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise CheckpointError(f"invalid {name} checkpoint pointer: {pointer}: {exc}") from exc
+
+
+def prune_unreferenced_checkpoints(checkpoint_dir: str | Path) -> list[Path]:
+    """Remove only committed step directories not referenced by best or last."""
+    root = Path(checkpoint_dir).resolve()
+    best = _pointer_target(root, "best")
+    last = _pointer_target(root, "last")
+    if last is None:
+        raise CheckpointError(f"cannot prune without a valid last pointer: {root}")
+    protected = {target for target in (best, last) if target is not None}
+    removed: list[Path] = []
+    for candidate in sorted(root.iterdir()):
+        if (
+            not _STEP_DIRECTORY.fullmatch(candidate.name)
+            or candidate.is_symlink()
+            or not candidate.is_dir()
+            or not (candidate / COMMIT_MARKER).is_file()
+        ):
+            continue
+        target = candidate.resolve()
+        if target.parent != root or target in protected:
+            continue
+        shutil.rmtree(target)
+        removed.append(target)
+    return removed
+
+
 def save_checkpoint(
     modules: dict[str, nn.Module],
     path: str | Path,
@@ -407,7 +493,9 @@ __all__ = [
     "load_distributed_checkpoint",
     "load_training_checkpoint",
     "publish_checkpoint_pointer",
+    "prune_unreferenced_checkpoints",
     "save_checkpoint",
     "save_distributed_checkpoint",
     "save_training_checkpoint",
+    "verify_committed_checkpoint",
 ]

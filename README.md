@@ -48,6 +48,28 @@ Molab reconstruction and local diagnostic profiles) to avoid authentication and
 network access during a run; artifacts are written under the run directory and can
 be synchronized later. Use `disabled` only when no W&B run directory is wanted.
 
+## Checkpoint retention
+
+Training keeps at most two committed full `step-*` checkpoint directories after a
+successful save: `best.json` points to the best configured early-stopping metric,
+and `last.json` points to the most recent exact-resume state.
+They may point to the same directory. A validation pass alone does not save: best
+improvement, `training.checkpoint_every_steps`, or a terminal optimizer step does.
+Use `doc2atom-train ... --resume latest` to resume from `last.json`. A hard crash
+can lose steps after that last committed save, but resumed optimizer, scheduler,
+RNG, curriculum, sampler and early-stopping state come from the full checkpoint.
+
+`training.checkpoint_retention: best_last` and
+`runtime.checkpoint_upload: best_weights` are the default policies; set the latter
+to `none` to disable model artifact upload. W&B receives training metrics throughout
+the run, but only the final best model weights, resolved config and run manifest
+are uploaded as a model artifact after a normal/early-stopped completion. It does
+not upload full resume state, ZeRO optimizer shards, or `.raw-responses`. If a Molab
+instance disappears before completion, this policy provides no remote exact-resume
+backup; copy the local `last` checkpoint to durable storage separately if needed.
+An intentional mid-run stop saves `last` but defers the best artifact; a small
+upload marker prevents re-uploading the same best step on a completed-run resume.
+
 The upstream repository linked by the paper was audited at commit
 `0848bda2aaef69b375436e24a30c8469a3f0560c`; it contained only a two-line
 README, so no upstream implementation or checkpoint was available to reuse.

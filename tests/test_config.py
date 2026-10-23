@@ -124,3 +124,24 @@ def test_checked_in_config_families_are_classified_and_runnable() -> None:
     assert reconstruction["runtime"]["gradient_checkpointing"] is False
     assert {item["id"] for item in reconstruction["assumptions"]}
 
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("training", "checkpoint_every_steps", 0),
+        ("training", "checkpoint_retention", "all"),
+        ("runtime", "checkpoint_upload", "full"),
+    ],
+)
+def test_invalid_checkpoint_policy_is_rejected(section, key, value):
+    config = {
+        "profile": {"name": "test", "family": "reconstruction"},
+        "assumptions": [], "deviations": [],
+        "training": {"checkpoint_every_steps": 10, "checkpoint_retention": "best_last"},
+        "runtime": {"checkpoint_upload": "best_weights"},
+    }
+    config[section][key] = value
+
+    with pytest.raises(config_module.ConfigError, match=key):
+        config_module.validate_config(config)
+

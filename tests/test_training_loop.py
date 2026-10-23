@@ -14,6 +14,7 @@ from doc_to_atom.injection.lora import DynamicLoRAInjector, discover_target_shap
 from doc_to_atom.router.model import TwoStageRouter
 from doc_to_atom.training.loop import run_training
 import doc_to_atom.training.loop as loop_module
+from doc_to_atom.training.distributed import LocalTrainingRuntime
 from doc_to_atom.training.system import TeacherStudentSystem
 import doc_to_atom.training.trainer as trainer_module
 
@@ -123,6 +124,253 @@ def _record(split, suffix=""):
     return StructuredRecord(
         record_id=f"r-{split}{suffix}", split=split, context="Alpha", atoms=atoms, qa_pairs=[qa]
     )
+
+
+def _tiny_system():
+    model = ToyLM(depth=6)
+    targets = discover_target_shapes(
+        model, [2, 3, 4, 5], ["q_proj", "v_proj", "o_proj", "down_proj"]
+    )
+    return TeacherStudentSystem(
+        model,
+        SharedAtomQueryEncoder(model, 8, 16, 4),
+        AtomMemoryCompiler(targets, input_dim=16, latent_dim=16, key_dim=16, rank=2),
+        TwoStageRouter(embedding_dim=16, key_dim=16, stage1_top_k=32),
+        MemoryComposer(),
+        DynamicLoRAInjector(model, targets, rank=2, alpha=4),
+    )
+
+
+def test_checkpoint_retention_does_not_save_each_nonimproving_validation(
+    tmp_path: Path, monkeypatch
+):
+    class Tracker:
+        run_id = "test-run"
+        mode = "disabled"
+
+        def __init__(self):
+            self.uploads = []
+
+        def log_metrics(self, values, *, step):
+            pass
+
+        def log_checkpoint(self, path):
+            self.uploads.append(("full", Path(path).name))
+
+        def log_best_weights(self, path, *, optimizer_step):
+            self.uploads.append(("best", Path(path).name, optimizer_step))
+
+    tracker = Tracker()
+    values = iter((1.0, 1.1, 1.2, 1.3))
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": next(values)}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 4, "gradient_accumulation_steps": 1,
+        "validation_every_steps": 1, "checkpoint_every_steps": 3,
+        "early_stopping_patience": 10,
+    })
+
+    result = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{index}") for index in range(4)] + [_record("validation")],
+        config, tmp_path, tracker=tracker,
+    )
+
+    checkpoints = tmp_path / "checkpoints"
+    assert result["optimizer_steps"] == 4
+    assert sorted(path.name for path in checkpoints.glob("step-*") if path.is_dir()) == [
+        "step-00000001", "step-00000004"
+    ]
+    assert json.loads((checkpoints / "best.json").read_text())["path"] == "step-00000001"
+    assert json.loads((checkpoints / "last.json").read_text())["path"] == "step-00000004"
+    from doc_to_atom.training.checkpoint import load_training_checkpoint
+
+    assert load_training_checkpoint({}, checkpoints / "step-00000001", restore_rng=False).optimizer_step == 1
+    last = load_training_checkpoint({}, checkpoints / "step-00000004", restore_rng=False)
+    assert last.optimizer_step == 4
+    assert last.bad_validations == 3
+    assert tracker.uploads == [("best", "step-00000001", 1)]
+
+
+def test_early_stopping_keeps_best_and_final_resumable_last(tmp_path: Path, monkeypatch):
+    class Tracker:
+        run_id = "test-run"
+        mode = "disabled"
+
+        def __init__(self):
+            self.uploads = 0
+
+        def log_metrics(self, values, *, step):
+            pass
+
+        def log_best_weights(self, path, *, optimizer_step):
+            self.uploads += 1
+
+    tracker = Tracker()
+    values = iter((1.0, 2.0, 3.0))
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": next(values)}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 3, "gradient_accumulation_steps": 1,
+        "validation_every_steps": 1, "checkpoint_every_steps": 100,
+        "early_stopping_patience": 1,
+    })
+
+    result = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{index}") for index in range(3)] + [_record("validation")],
+        config, tmp_path, tracker=tracker,
+    )
+
+    checkpoints = tmp_path / "checkpoints"
+    assert result["early_stopped"] and result["optimizer_steps"] == 2
+    assert json.loads((checkpoints / "best.json").read_text())["path"] == "step-00000001"
+    last_path = checkpoints / json.loads((checkpoints / "last.json").read_text())["path"]
+    from doc_to_atom.training.checkpoint import load_training_checkpoint
+
+    state = load_training_checkpoint({}, last_path, restore_rng=False)
+    assert state.exact_resume and state.early_stopped
+    assert state.optimizer_step == 2 and state.bad_validations == 1
+
+    resumed = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{index}") for index in range(3)] + [_record("validation")],
+        config, tmp_path, resume_from=checkpoints / "last.json", tracker=tracker,
+    )
+    assert resumed["early_stopped"] and resumed["optimizer_steps"] == 2
+    assert json.loads((checkpoints / "last.json").read_text())["path"] == "step-00000002"
+    assert tracker.uploads == 1
+
+
+def test_intentional_mid_run_stop_keeps_last_but_defers_best_upload(tmp_path: Path, monkeypatch):
+    class Tracker:
+        run_id = "test-run"
+        mode = "disabled"
+
+        def __init__(self):
+            self.uploads = 0
+
+        def log_metrics(self, values, *, step):
+            pass
+
+        def log_best_weights(self, path, *, optimizer_step):
+            self.uploads += 1
+
+    tracker = Tracker()
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": 1.0}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 3, "gradient_accumulation_steps": 1,
+        "validation_every_steps": 1, "early_stopping_patience": 10,
+    })
+
+    result = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{index}") for index in range(3)] + [_record("validation")],
+        config, tmp_path, tracker=tracker, stop_after_optimizer_steps=1,
+    )
+
+    assert result["optimizer_steps"] == 1
+    assert (tmp_path / "checkpoints" / "last.json").is_file()
+    assert tracker.uploads == 0
+
+
+def test_distributed_main_rank_retains_best_last_after_collective_save(
+    tmp_path: Path, monkeypatch
+):
+    class SingleRankZeROHarness(LocalTrainingRuntime):
+        backend = "deepspeed_zero2"
+        world_size = 2
+        rank = 0
+        is_main_process = True
+        is_distributed = True
+
+        def __init__(self):
+            super().__init__(1)
+            self.barriers = 0
+
+        def wait_for_everyone(self):
+            self.barriers += 1
+
+        def collective_errors(self, error):
+            return [error, None]
+
+        def save_state(self, path):
+            path.mkdir(parents=True, exist_ok=True)
+            (path / "rank-0.state").write_bytes(b"accelerate state")
+
+    values = iter((1.0, 2.0, 3.0))
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": next(values)}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 3, "gradient_accumulation_steps": 1,
+        "validation_every_steps": 1, "checkpoint_every_steps": 2,
+        "early_stopping_patience": 10,
+    })
+    harness = SingleRankZeROHarness()
+
+    result = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{index}") for index in range(6)] + [_record("validation")],
+        config, tmp_path, runtime=harness,
+    )
+
+    checkpoints = tmp_path / "checkpoints"
+    assert result["optimizer_steps"] == 3
+    assert sorted(path.name for path in checkpoints.glob("step-*") if path.is_dir()) == [
+        "step-00000001", "step-00000003"
+    ]
+    assert (checkpoints / "step-00000003" / "accelerate" / "rank-0.state").is_file()
+    assert harness.barriers >= 3 * 3
+
+
+def test_checkpoint_upload_none_keeps_local_best_without_tracker_upload(
+    tmp_path: Path, monkeypatch
+):
+    class Tracker:
+        run_id = "test-run"
+        mode = "disabled"
+
+        def __init__(self):
+            self.uploads = 0
+
+        def log_metrics(self, values, *, step):
+            pass
+
+        def log_best_weights(self, path, *, optimizer_step):
+            self.uploads += 1
+
+    tracker = Tracker()
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": 1.0}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 1, "gradient_accumulation_steps": 1,
+        "early_stopping_patience": 2,
+    })
+    config["runtime"]["checkpoint_upload"] = "none"
+
+    run_training(
+        _tiny_system(), ToyTokenizer(), [_record("train"), _record("validation")],
+        config, tmp_path, tracker=tracker,
+    )
+
+    assert tracker.uploads == 0
+    assert (tmp_path / "checkpoints" / "best.json").is_file()
 
 
 def test_tiny_teacher_student_training_loop(tmp_path: Path):

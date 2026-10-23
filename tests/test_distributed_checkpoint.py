@@ -11,6 +11,7 @@ from doc_to_atom.training.checkpoint import (
     CheckpointError,
     IncompatibleCheckpointError,
     load_distributed_checkpoint,
+    prune_unreferenced_checkpoints,
     publish_checkpoint_pointer,
     save_distributed_checkpoint,
 )
@@ -124,6 +125,30 @@ def test_pointer_is_written_only_for_committed_checkpoint(tmp_path: Path) -> Non
 
     payload = json.loads(pointer.read_text(encoding="utf-8"))
     assert payload == {"optimizer_step": 3, "path": "step"}
+
+
+def test_distributed_retention_keeps_resumable_best_and_last_shards(tmp_path: Path):
+    runtime = FakeDistributedRuntime(backend="deepspeed_zero2")
+    checkpoints = []
+    for step in (1, 2, 3):
+        target = save_distributed_checkpoint(
+            runtime, {"module": nn.Linear(1, 1)}, tmp_path / f"step-{step:08d}",
+            state=_state(optimizer_step=step, distributed_backend="deepspeed_zero2"),
+        )
+        checkpoints.append(target)
+    publish_checkpoint_pointer(tmp_path / "best.json", checkpoints[0], optimizer_step=1)
+    publish_checkpoint_pointer(tmp_path / "last.json", checkpoints[2], optimizer_step=3)
+
+    removed = prune_unreferenced_checkpoints(tmp_path)
+
+    assert removed == [checkpoints[1]]
+    for target in (checkpoints[0], checkpoints[2]):
+        assert (target / "accelerate" / "rank-0.state").is_file()
+        assert (target / "portable" / "model.safetensors").is_file()
+    restored = load_distributed_checkpoint(
+        runtime, checkpoints[2], expected_fingerprints={"config": "config-hash"}
+    )
+    assert restored.optimizer_step == 3 and restored.exact_resume
 
 
 @pytest.mark.parametrize(

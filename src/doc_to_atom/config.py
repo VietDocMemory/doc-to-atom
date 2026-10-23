@@ -121,6 +121,15 @@ def validate_config(config: dict[str, Any], *, require_runnable: bool = False) -
     _validate_metadata_entries(
         config.get("deviations", []), kind="deviation", required_fields=DEVIATION_FIELDS
     )
+    training = config.get("training", {})
+    runtime = config.get("runtime", {})
+    if training.get("checkpoint_retention", "best_last") != "best_last":
+        raise ConfigError("training.checkpoint_retention must be best_last")
+    interval = training.get("checkpoint_every_steps", 1000)
+    if type(interval) is not int or interval < 1:
+        raise ConfigError("training.checkpoint_every_steps must be a positive integer")
+    if runtime.get("checkpoint_upload", "best_weights") not in {"best_weights", "none"}:
+        raise ConfigError("runtime.checkpoint_upload must be best_weights or none")
     if require_runnable:
         try:
             require_disclosed_training_values(config)

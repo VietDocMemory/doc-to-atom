@@ -91,6 +91,37 @@ class RunTracker:
         else:
             self.log_file(resolved)
 
+    def log_best_weights(self, checkpoint: str | Path, *, optimizer_step: int) -> None:
+        """Upload one model-only best artifact, never exact-resume state or raw responses."""
+        root = Path(checkpoint).resolve()
+        weights = root / "model.safetensors"
+        if not weights.is_file():
+            weights = root / "portable" / "model.safetensors"
+        if not weights.is_file():
+            raise FileNotFoundError(f"best model weights do not exist: {root}")
+        self.context.log_event(
+            "best_model", {"path": str(weights), "optimizer_step": optimizer_step}
+        )
+        if self._run is None:
+            return
+        import wandb
+
+        artifact = wandb.Artifact(
+            name=f"{self.context.run_id}-best-model",
+            type="model",
+            metadata={
+                "optimizer_step": optimizer_step,
+                "config_fingerprint": self.context.config_fingerprint,
+            },
+        )
+        artifact.add_file(str(weights), name="model.safetensors")
+        artifact.add_file(
+            str(self.context.root / "config" / "resolved.yaml"),
+            name="config/resolved.yaml",
+        )
+        artifact.add_file(str(self.context.run_manifest_path), name="manifests/run.json")
+        self._run.log_artifact(artifact, aliases=["best"])
+
     def finish(self) -> None:
         if self._run is not None:
             self._run.finish()

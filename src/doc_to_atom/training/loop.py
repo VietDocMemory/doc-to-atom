@@ -27,11 +27,14 @@ from doc_to_atom.losses.objectives import (
 )
 from doc_to_atom.runtime.run import atomic_write_json
 from doc_to_atom.training.checkpoint import (
+    CheckpointError,
     load_distributed_checkpoint,
     load_training_checkpoint,
+    prune_unreferenced_checkpoints,
     publish_checkpoint_pointer,
     save_distributed_checkpoint,
     save_training_checkpoint,
+    verify_committed_checkpoint,
 )
 from doc_to_atom.training.curriculum import stage_for_step
 from doc_to_atom.training.distributed import (
@@ -442,6 +445,9 @@ def run_training(
     last_validation_report = None
     stopped = state.early_stopped
     window_traces: list[dict] = []
+    next_epoch, next_cursor = state.epoch, state.record_cursor
+    if stopped or optimizer_step >= total_steps:
+        start_epoch = max_epochs
 
     current_epoch_plan: DistributedEpochPlan | None = None
 
@@ -494,20 +500,35 @@ def run_training(
                 optimizer=optimizer,
                 scheduler=scheduler,
             )
+        runtime.wait_for_everyone()
+        publication_error = None
         if runtime.is_main_process:
-            publish_checkpoint_pointer(
-                checkpoint_dir / "last.json",
-                destination,
-                optimizer_step=optimizer_step,
-            )
-            if best:
+            try:
+                verify_committed_checkpoint(
+                    destination, optimizer_step=optimizer_step,
+                    distributed=runtime.is_distributed,
+                )
                 publish_checkpoint_pointer(
-                    checkpoint_dir / "best.json",
+                    checkpoint_dir / "last.json",
                     destination,
                     optimizer_step=optimizer_step,
                 )
-            if tracker is not None:
-                tracker.log_checkpoint(destination)
+                if best:
+                    publish_checkpoint_pointer(
+                        checkpoint_dir / "best.json",
+                        destination,
+                        optimizer_step=optimizer_step,
+                    )
+                prune_unreferenced_checkpoints(checkpoint_dir)
+            except Exception as exc:
+                publication_error = f"{type(exc).__name__}: {exc}"
+        if runtime.is_distributed:
+            errors = runtime.collective_errors(publication_error)
+            failures = [f"rank {rank}: {error}" for rank, error in enumerate(errors) if error]
+            if failures:
+                raise CheckpointError("checkpoint publication failed; " + "; ".join(failures))
+        elif publication_error is not None:
+            raise CheckpointError(f"checkpoint publication failed; {publication_error}")
         runtime.wait_for_everyone()
         return destination
 
@@ -654,10 +675,10 @@ def run_training(
             checkpoint_every = int(training_config.get("checkpoint_every_steps", 1000))
             if (
                 improved
-                or validation_due
-                or at_epoch_end
+                or stopped
                 or max_steps_reached
                 or requested_stop
+                or (at_epoch_end and epoch == max_epochs - 1)
                 or optimizer_step % checkpoint_every == 0
             ):
                 save_state(next_epoch, next_cursor, best=improved)
@@ -670,8 +691,38 @@ def run_training(
         ):
             break
 
-    if optimizer_step and not (checkpoint_dir / "last.json").exists():
-        save_state(min(max_epochs, start_epoch + 1), 0)
+    if optimizer_step:
+        pointer = checkpoint_dir / "last.json"
+        saved_step = (
+            json.loads(pointer.read_text(encoding="utf-8"))["optimizer_step"]
+            if pointer.is_file() else None
+        )
+        if saved_step != optimizer_step:
+            save_state(next_epoch, next_cursor)
+    if (
+        runtime.is_main_process
+        and tracker is not None
+        and (stopped or optimizer_step >= total_steps or next_epoch >= max_epochs)
+        and config.get("runtime", {}).get("checkpoint_upload", "best_weights") == "best_weights"
+        and (checkpoint_dir / "best.json").is_file()
+    ):
+        best_path = _resume_path(checkpoint_dir / "best.json")
+        best_step = int(json.loads((checkpoint_dir / "best.json").read_text())["optimizer_step"])
+        upload_marker = output_dir / "manifests" / "best_model_upload.json"
+        uploaded = None
+        if upload_marker.is_file():
+            try:
+                uploaded = json.loads(upload_marker.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+        if uploaded != {"checkpoint": best_path.name, "optimizer_step": best_step}:
+            verify_committed_checkpoint(
+                best_path, optimizer_step=best_step, distributed=runtime.is_distributed
+            )
+            tracker.log_best_weights(best_path, optimizer_step=best_step)
+            atomic_write_json(
+                upload_marker, {"checkpoint": best_path.name, "optimizer_step": best_step}
+            )
     best_validation = (
         float("inf")
         if early_stopping is None or early_stopping.best is None
