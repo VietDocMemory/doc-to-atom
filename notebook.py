@@ -256,7 +256,8 @@ def _(mo):
                 ## 2. Chuẩn bị dữ liệu
 
                 Nếu có `OPENAI_API_KEY`, bước này atomize bằng model trong
-                `OPENAI_ANNOTATION_MODEL`. Nếu không, notebook chỉ dùng file atomized mẫu có sẵn.
+                `OPENAI_ANNOTATION_MODEL`. Nếu không, notebook dùng lại file atomized
+                đã có tại `data/squad_molab_atoms.jsonl`.
                 Atomization hỗ trợ resume và retry record có source span không hợp lệ.
                 """
             ),
@@ -269,7 +270,6 @@ def _(mo):
 @app.cell
 def _(
     ATOM_DATA_PATH,
-    FALLBACK_ATOM_DATA_PATH,
     RAW_DATA_PATH,
     os,
     prepare_button,
@@ -310,14 +310,14 @@ def _(
                 ]
             )
             _data = ATOM_DATA_PATH
-        elif FALLBACK_ATOM_DATA_PATH.is_file():
+        elif ATOM_DATA_PATH.is_file():
             print(
-                "OPENAI_API_KEY không khả dụng; dùng dataset atomized mẫu "
-                f"{FALLBACK_ATOM_DATA_PATH}."
+                "OPENAI_API_KEY không khả dụng; dùng lại dataset atomized "
+                f"{ATOM_DATA_PATH}."
             )
-            _data = FALLBACK_ATOM_DATA_PATH
+            _data = ATOM_DATA_PATH
         else:
-            raise RuntimeError("Thiếu OPENAI_API_KEY và không có atomized dataset mẫu.")
+            raise RuntimeError("Thiếu OPENAI_API_KEY và chưa có atomized dataset.")
 
         run_cmd(
             [
@@ -326,10 +326,17 @@ def _(
                 "doc2atom-validate",
                 "--input",
                 str(_data),
+                "--source",
+                str(RAW_DATA_PATH),
                 "--reject-span-mismatch",
             ]
         )
-        run_cmd(["uv", "run", "scripts/audit_semantics.py", "--input", str(_data)])
+        run_cmd(
+            [
+                "uv", "run", "scripts/audit_semantics.py",
+                "--input", str(_data), "--source", str(RAW_DATA_PATH),
+            ]
+        )
     return
 
 
@@ -486,15 +493,16 @@ def _(
 @app.cell
 def _(mo):
     sync_button = mo.ui.run_button(label="5. Đồng bộ các W&B offline run")
-    score_button = mo.ui.run_button(label="6. Chấm predictions JSONL")
+    score_button = mo.ui.run_button(label="6. Generate và chấm validation")
     mo.vstack(
         [
             mo.md(
                 """
                 ## 5–6. Đồng bộ và evaluation
 
-                Evaluation CLI hiện chỉ chấm file predictions đã tồn tại; notebook không truyền raw
-                dataset vào held-out evaluator vì đó là sai schema.
+                Nếu chưa có predictions, notebook dùng checkpoint best (hoặc last), config snapshot,
+                atomized data và source JSONL để generate rồi chấm validation. Nếu predictions
+                đã tồn tại, notebook chỉ chấm lại file đó, không ghi đè.
                 """
             ),
             mo.hstack([sync_button, score_button]),
@@ -515,21 +523,32 @@ def _(OUTPUT_DIR, find_offline_wandb_runs, run_cmd, sync_button):
 
 
 @app.cell
-def _(PRED_EVAL_PATH, run_cmd, score_button):
+def _(OUTPUT_DIR, PRED_EVAL_PATH, RAW_DATA_PATH, run_cmd, score_button, selected_atom_data):
     if score_button.value:
-        if not PRED_EVAL_PATH.is_file():
-            raise FileNotFoundError(
-                f"Chưa có {PRED_EVAL_PATH}. Evaluation CLI hiện không tự generate predictions."
+        if PRED_EVAL_PATH.is_file():
+            run_cmd(["uv", "run", "doc2atom-evaluate", "--predictions", str(PRED_EVAL_PATH)])
+        else:
+            _snapshot = OUTPUT_DIR / "config" / "resolved.yaml"
+            _best = OUTPUT_DIR / "checkpoints" / "best.json"
+            _last = OUTPUT_DIR / "checkpoints" / "last.json"
+            _checkpoint = _best if _best.is_file() else _last
+            if not _checkpoint.is_file():
+                raise FileNotFoundError(f"Chưa có best/last checkpoint trong {OUTPUT_DIR}.")
+            if not _snapshot.is_file():
+                raise FileNotFoundError(f"Chưa có config snapshot: {_snapshot}.")
+            if not RAW_DATA_PATH.is_file():
+                raise FileNotFoundError(f"Chưa có source dataset: {RAW_DATA_PATH}.")
+            run_cmd(
+                [
+                    "uv", "run", "doc2atom-evaluate",
+                    "--config", str(_snapshot),
+                    "--data", str(selected_atom_data()),
+                    "--source", str(RAW_DATA_PATH),
+                    "--checkpoint", str(_checkpoint),
+                    "--output", str(PRED_EVAL_PATH),
+                    "--split", "validation",
+                ]
             )
-        run_cmd(
-            [
-                "uv",
-                "run",
-                "doc2atom-evaluate",
-                "--predictions",
-                str(PRED_EVAL_PATH),
-            ]
-        )
     return
 
 
