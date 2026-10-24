@@ -10,6 +10,7 @@ import torch
 
 from doc_to_atom.config import (
     config_fingerprint,
+    config_fingerprint_candidates,
     legacy_config_fingerprint,
     load_config,
     load_project_env,
@@ -155,10 +156,7 @@ def main() -> None:
         if not records:
             raise ValueError(f"no records for split {args.split}")
         config = load_config(args.config)
-        expected_config_fingerprints = {
-            config_fingerprint(config),
-            legacy_config_fingerprint(config),
-        }
+        expected_config_fingerprints = config_fingerprint_candidates(config)
         system, tokenizer, _targets = build_system(config, enable_reranker=not args.no_reranker)
         modules = {
             "encoder_projection": system.encoder.projection,

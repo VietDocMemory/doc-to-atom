@@ -18,9 +18,9 @@ from typing import Any, Mapping, Sequence
 
 import yaml
 
-from doc_to_atom.config import config_fingerprint
+from doc_to_atom.config import config_fingerprint, config_fingerprint_candidates, load_config
+from doc_to_atom.credentials import redact_secrets
 
-_SECRET_PARTS = ("api_key", "apikey", "token", "password", "secret", "credential", "authorization")
 _DIRECTORIES = (
     "config",
     "manifests",
@@ -36,34 +36,6 @@ _DIRECTORIES = (
 
 class RunContextError(RuntimeError):
     """Raised when a run directory cannot be created or resumed safely."""
-
-
-def _is_secret_key(key: object) -> bool:
-    normalized = str(key).lower().replace("-", "_")
-    return any(part in normalized for part in _SECRET_PARTS)
-
-
-def redact_secrets(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {
-            str(key): "<redacted>" if _is_secret_key(key) else redact_secrets(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, tuple):
-        return tuple(redact_secrets(item) for item in value)
-    if isinstance(value, list):
-        result: list[Any] = []
-        redact_next = False
-        for item in value:
-            if redact_next:
-                result.append("<redacted>")
-                redact_next = False
-                continue
-            result.append(redact_secrets(item))
-            if isinstance(item, str) and item.startswith("-") and _is_secret_key(item):
-                redact_next = True
-        return result
-    return value
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -90,6 +62,34 @@ def atomic_write_yaml(path: Path, value: Any) -> None:
     atomic_write_text(
         path, yaml.safe_dump(redact_secrets(value), allow_unicode=True, sort_keys=True)
     )
+
+
+def _verify_config_snapshot(path: Path, fingerprint: str) -> None:
+    try:
+        matches = config_fingerprint(load_config(path)) == fingerprint
+    except (ValueError, OSError, TypeError, yaml.YAMLError):
+        raise RunContextError("resolved config snapshot cannot be verified") from None
+    if not matches:
+        raise RunContextError(
+            "resolved config snapshot fingerprint differs from the effective training config; "
+            "supply the original resolved config with all training overrides to recover the run"
+        )
+
+
+def _sanitize_run_metadata(root: Path) -> None:
+    """Protect metadata written by older versions before tracking a resumed run."""
+    for directory in (root / "config", root / "manifests"):
+        for path in sorted(directory.iterdir()):
+            if not path.is_file() or path.suffix not in {".yaml", ".yml", ".json"}:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+                value = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+                if value != redact_secrets(value):
+                    writer = atomic_write_json if path.suffix == ".json" else atomic_write_yaml
+                    writer(path, value)
+            except (ValueError, OSError, TypeError, yaml.YAMLError):
+                raise RunContextError("cannot sanitize historical run metadata before tracking") from None
 
 
 def _git_state(root: Path) -> dict[str, Any]:
@@ -166,8 +166,12 @@ class RunContext:
             if not manifest_path.is_file():
                 raise RunContextError(f"cannot resume: missing run manifest at {manifest_path}")
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest.get("config_fingerprint") != fingerprint:
+            if manifest.get("config_fingerprint") not in config_fingerprint_candidates(config):
                 raise RunContextError("cannot resume: config fingerprint differs from the original run")
+            snapshot = root / "config" / "resolved.yaml"
+            _verify_config_snapshot(snapshot, fingerprint)
+            _sanitize_run_metadata(root)
+            _verify_config_snapshot(snapshot, fingerprint)
             return cls(root, str(manifest["run_id"]), config, fingerprint)
         if manifest_path.exists():
             raise RunContextError(f"output directory already contains a run: {root}")
@@ -178,6 +182,7 @@ class RunContext:
             (root / name).mkdir(parents=True, exist_ok=True)
         context = cls(root, resolved_id, config, fingerprint)
         atomic_write_yaml(root / "config" / "resolved.yaml", config)
+        _verify_config_snapshot(root / "config" / "resolved.yaml", fingerprint)
         atomic_write_json(root / "config" / "assumptions.json", config.get("assumptions", []))
         captured_environment = dict(environment) if environment is not None else {
             key: value

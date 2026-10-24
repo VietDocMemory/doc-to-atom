@@ -14,7 +14,7 @@ from transformers import get_cosine_schedule_with_warmup
 from doc_to_atom.atomization.models import StructuredRecord
 from doc_to_atom.data.targets import resolve_target
 from doc_to_atom.compiler.memory import MemoryBank
-from doc_to_atom.config import config_fingerprint
+from doc_to_atom.config import config_fingerprint, config_fingerprint_candidates
 from doc_to_atom.losses.objectives import (
     composition_consistency_loss,
     confidence_alignment_loss,
@@ -391,7 +391,7 @@ def run_training(
             state = load_distributed_checkpoint(
                 runtime,
                 checkpoint_path,
-                expected_fingerprints={"config": fingerprint},
+                expected_fingerprints={"config": config_fingerprint_candidates(config)},
             )
         else:
             state = load_training_checkpoint(
@@ -399,7 +399,7 @@ def run_training(
                 checkpoint_path,
                 optimizer=optimizer,
                 scheduler=scheduler,
-                expected_fingerprints={"config": fingerprint},
+                expected_fingerprints={"config": config_fingerprint_candidates(config)},
                 restore_rng=True,
             )
         if not state.exact_resume:

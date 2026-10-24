@@ -9,6 +9,8 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from doc_to_atom.credentials import redact_secrets
+
 ROOT = Path(__file__).resolve().parents[2]
 
 CONFIG_FAMILIES = frozenset({"paper_like", "reconstruction", "experiments", "runtime"})
@@ -122,13 +124,25 @@ def _fingerprint_config(value: Any) -> Any:
 
 
 def config_fingerprint(config: dict[str, Any]) -> str:
-    semantic_config = _fingerprint_config(config)
+    semantic_config = _fingerprint_config(redact_secrets(config))
     return hashlib.sha256(canonical_config_json(semantic_config).encode("utf-8")).hexdigest()
 
 
 def legacy_config_fingerprint(config: dict[str, Any]) -> str:
     """Hash the complete config for compatibility with pre-normalization checkpoints."""
     return hashlib.sha256(canonical_config_json(config).encode("utf-8")).hexdigest()
+
+
+def config_fingerprint_candidates(config: dict[str, Any]) -> set[str]:
+    """Strict hashes of this config under current and historical algorithms.
+
+    Historical credential-bearing checkpoints require the original config, not
+    guessed values from a corrupted snapshot. Checkpoint metadata is never edited.
+    """
+    historical_semantic = hashlib.sha256(
+        canonical_config_json(_fingerprint_config(config)).encode("utf-8")
+    ).hexdigest()
+    return {config_fingerprint(config), historical_semantic, legacy_config_fingerprint(config)}
 
 
 def _validate_metadata_entries(

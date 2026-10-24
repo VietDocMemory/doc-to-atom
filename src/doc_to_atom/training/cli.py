@@ -7,10 +7,12 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 from doc_to_atom.config import ROOT, load_and_resolve_config, load_project_env, validate_config
 from doc_to_atom.data.io import read_jsonl, validate_jsonl
 from doc_to_atom.runtime import RunContext, RunTracker
-from doc_to_atom.runtime.run import atomic_write_json, atomic_write_text
+from doc_to_atom.runtime.run import atomic_write_json, atomic_write_yaml
 from doc_to_atom.training.factory import build_system, parameter_counts
 from doc_to_atom.training.loop import run_training
 
@@ -77,8 +79,9 @@ def execute(
         resume=resume_path is not None,
     )
     if resume_path is None:
-        atomic_write_text(
-            output / "config" / "requested.yaml", config_path.read_text(encoding="utf-8")
+        atomic_write_yaml(
+            output / "config" / "requested.yaml",
+            yaml.safe_load(config_path.read_text(encoding="utf-8")),
         )
     tracker = RunTracker.create(
         context,
