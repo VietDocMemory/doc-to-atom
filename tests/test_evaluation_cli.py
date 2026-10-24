@@ -114,12 +114,27 @@ def test_evaluation_cli_generates_predictions_and_metrics_from_checkpoint(
         router=fake_module,
         eval=lambda: None,
     )
+    config = {
+        "model": {"flash_attention_2": True},
+        "evaluation": {"max_new_tokens": 8},
+    }
+    checkpoint_call = {}
+
+    def build_system_with_sdpa_fallback(runtime_config, **kwargs):
+        runtime_config["model"]["flash_attention_2"] = False
+        runtime_config["model"]["attn_implementation"] = "sdpa"
+        return system, object(), []
+
+    def load_checkpoint(*args, **kwargs):
+        checkpoint_call.update(kwargs)
+        return SimpleNamespace(optimizer_step=36)
+
     monkeypatch.setattr(cli, "validate_jsonl", lambda *args, **kwargs: {"errors": 0, "invalid_spans": 0})
     monkeypatch.setattr(cli, "read_jsonl", lambda path: [record])
-    monkeypatch.setattr(cli, "load_config", lambda path: {"evaluation": {"max_new_tokens": 8}})
-    monkeypatch.setattr(cli, "build_system", lambda *args, **kwargs: (system, object(), []))
+    monkeypatch.setattr(cli, "load_config", lambda path: config)
+    monkeypatch.setattr(cli, "build_system", build_system_with_sdpa_fallback)
     monkeypatch.setattr(cli, "_checkpoint_directory", lambda path: path)
-    monkeypatch.setattr(cli, "load_training_checkpoint", lambda *args, **kwargs: SimpleNamespace(optimizer_step=36))
+    monkeypatch.setattr(cli, "load_training_checkpoint", load_checkpoint)
     monkeypatch.setattr(
         cli,
         "generate_rows",
@@ -142,6 +157,10 @@ def test_evaluation_cli_generates_predictions_and_metrics_from_checkpoint(
     assert metrics["checkpoint_step"] == 36
     assert metrics["irrelevant_count"] == 1
     assert json.loads(capsys.readouterr().out)["answerable_count"] == 1
+    expected = checkpoint_call["expected_fingerprints"]["config"]
+    assert cli.legacy_config_fingerprint(
+        {"model": {"flash_attention_2": True}, "evaluation": {"max_new_tokens": 8}}
+    ) in expected
 
 
 def test_checkpoint_pointer_resolves_portable_distributed_weights(tmp_path):

@@ -7,8 +7,9 @@ import re
 import shutil
 import tempfile
 import uuid
+from collections.abc import Collection, Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 import torch
@@ -119,7 +120,7 @@ def _load_modules(
 
 
 def _validate_fingerprints(
-    state: TrainerState, expected: Mapping[str, str] | None
+    state: TrainerState, expected: Mapping[str, str | Collection[str]] | None
 ) -> None:
     if not expected:
         return
@@ -129,7 +130,11 @@ def _validate_fingerprints(
         "model": state.model_fingerprint,
         "prompt": state.prompt_fingerprint,
     }
-    mismatches = [name for name, value in expected.items() if actual.get(name) != value]
+    mismatches = []
+    for name, value in expected.items():
+        candidates = {value} if isinstance(value, str) else value
+        if actual.get(name) not in candidates:
+            mismatches.append(name)
     if mismatches:
         raise IncompatibleCheckpointError(
             "checkpoint fingerprint mismatch: " + ", ".join(sorted(mismatches))
@@ -194,7 +199,7 @@ def load_training_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: Any = None,
     scaler: Any = None,
-    expected_fingerprints: Mapping[str, str] | None = None,
+    expected_fingerprints: Mapping[str, str | Collection[str]] | None = None,
     restore_rng: bool = True,
     allow_legacy_weights: bool = False,
 ) -> TrainerState:
@@ -334,7 +339,7 @@ def load_distributed_checkpoint(
     runtime,
     path: str | Path,
     *,
-    expected_fingerprints: Mapping[str, str] | None = None,
+    expected_fingerprints: Mapping[str, str | Collection[str]] | None = None,
 ) -> TrainerState:
     """Validate shared control state before collectively restoring Accelerate."""
     checkpoint = Path(path).resolve()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -24,6 +24,29 @@ ASSUMPTION_FIELDS = frozenset(
     }
 )
 DEVIATION_FIELDS = frozenset({"id", "description", "rationale", "affected_metrics"})
+
+# These values select an execution environment or an equivalent implementation;
+# they do not change the learned model contract.  Keeping them out of the
+# fingerprint lets a checkpoint trained on one host be evaluated on another.
+_FINGERPRINT_IGNORED_KEYS = frozenset(
+    {
+        "attention_implementation",
+        "attn_implementation",
+        "cache_dir",
+        "checkpoint_dir",
+        "device",
+        "device_map",
+        "flash_attention",
+        "flash_attention_2",
+        "log_dir",
+        "logging_dir",
+        "output_dir",
+        "reranker_device",
+        "run_dir",
+        "use_flash_attention_2",
+        "wandb_dir",
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -83,7 +106,28 @@ def canonical_config_json(config: dict[str, Any]) -> str:
     )
 
 
+def _fingerprint_config(value: Any) -> Any:
+    """Return a copy without host-specific execution settings."""
+    if isinstance(value, dict):
+        return {
+            key: _fingerprint_config(item)
+            for key, item in value.items()
+            if str(key).lower().replace("-", "_") not in _FINGERPRINT_IGNORED_KEYS
+        }
+    if isinstance(value, list):
+        return [_fingerprint_config(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_fingerprint_config(item) for item in value)
+    return value
+
+
 def config_fingerprint(config: dict[str, Any]) -> str:
+    semantic_config = _fingerprint_config(config)
+    return hashlib.sha256(canonical_config_json(semantic_config).encode("utf-8")).hexdigest()
+
+
+def legacy_config_fingerprint(config: dict[str, Any]) -> str:
+    """Hash the complete config for compatibility with pre-normalization checkpoints."""
     return hashlib.sha256(canonical_config_json(config).encode("utf-8")).hexdigest()
 
 

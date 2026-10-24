@@ -23,7 +23,7 @@ def _():
 
     import marimo as mo
 
-    return Path, datetime, mo, os, shutil, subprocess, sys, timezone
+    return Path, mo, os, shutil, subprocess, sys
 
 
 @app.cell
@@ -137,13 +137,7 @@ def _(Path, os, sys):
 
     ENV_FILE = find_molab_env_file(NOTEBOOK_FILE, REPO_DIR)
     SECRET_STATUS = load_molab_environment(ENV_FILE)
-    return (
-        ENV_FILE,
-        REPO_DIR,
-        SECRET_STATUS,
-        find_offline_wandb_runs,
-        resolve_latest_checkpoint,
-    )
+    return ENV_FILE, REPO_DIR, SECRET_STATUS, resolve_latest_checkpoint
 
 
 @app.cell
@@ -174,6 +168,7 @@ def _(ENV_FILE, REPO_DIR, SECRET_STATUS, mo):
 def _(Path, REPO_DIR, os, shutil, subprocess):
     DATA_DIR = REPO_DIR / "data"
     OUTPUT_DIR = REPO_DIR / "outputs" / "molab-single-gpu"
+    # OUTPUT_DIR2 = REPO_DIR / "outputs" / "molab-gpu-check-20261024-043425"
     RAW_DATA_PATH = DATA_DIR / "squad_molab_raw.jsonl"
     ATOM_DATA_PATH = DATA_DIR / "squad_molab_atoms.jsonl"
     PRED_EVAL_PATH = OUTPUT_DIR / "predictions.jsonl"
@@ -222,333 +217,262 @@ def _(Path, REPO_DIR, os, shutil, subprocess):
 
 
 @app.cell
-def _(mo):
-    environment_button = mo.ui.run_button(label="1. Kiểm tra GPU và credentials")
-    mo.vstack([mo.md("## 1. Kiểm tra môi trường Molab"), environment_button])
-    return (environment_button,)
-
-
-@app.cell
-def _(environment_button, run_cmd):
-    if environment_button.value:
-        _script = (
-            "import os, torch; "
-            "print('torch:', torch.__version__); "
-            "print('cuda:', torch.cuda.is_available()); "
-            "print('gpu_count:', torch.cuda.device_count()); "
-            "print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'); "
-            "print('HF_TOKEN:', 'available' if os.getenv('HF_TOKEN') else 'missing'); "
-            "print('OPENAI_API_KEY:', 'available' if os.getenv('OPENAI_API_KEY') else 'missing'); "
-            "print('WANDB_API_KEY:', 'available' if os.getenv('WANDB_API_KEY') else 'missing'); "
-            "print('OPENAI_ANNOTATION_MODEL:', os.getenv('OPENAI_ANNOTATION_MODEL', 'default'))"
-        )
-        run_cmd(["uv", "run", "python", "-c", _script])
+def _(run_cmd):
+    _script = (
+        "import os, torch; "
+        "print('torch:', torch.__version__); "
+        "print('cuda:', torch.cuda.is_available()); "
+        "print('gpu_count:', torch.cuda.device_count()); "
+        "print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'); "
+        "print('HF_TOKEN:', 'available' if os.getenv('HF_TOKEN') else 'missing'); "
+        "print('OPENAI_API_KEY:', 'available' if os.getenv('OPENAI_API_KEY') else 'missing'); "
+        "print('WANDB_API_KEY:', 'available' if os.getenv('WANDB_API_KEY') else 'missing'); "
+        "print('OPENAI_ANNOTATION_MODEL:', os.getenv('OPENAI_ANNOTATION_MODEL', 'default'))"
+    )
+    run_cmd(["uv", "run", "python", "-c", _script])
     return
 
 
 @app.cell
-def _(mo):
-    prepare_button = mo.ui.run_button(label="2. Chuẩn bị, atomize và validate SQuAD nhỏ")
-    mo.vstack(
-        [
-            mo.md(
-                """
-                ## 2. Chuẩn bị dữ liệu
-
-                Nếu có `OPENAI_API_KEY`, bước này atomize bằng model trong
-                `OPENAI_ANNOTATION_MODEL`. Nếu không, notebook dùng lại file atomized
-                đã có tại `data/squad_molab_atoms.jsonl`.
-                Atomization hỗ trợ resume và retry record có source span không hợp lệ.
-                """
-            ),
-            prepare_button,
-        ]
-    )
-    return (prepare_button,)
+def _():
+    return
 
 
 @app.cell
-def _(
-    ATOM_DATA_PATH,
-    RAW_DATA_PATH,
-    os,
-    prepare_button,
-    run_cmd,
-):
-    if prepare_button.value:
-        if not RAW_DATA_PATH.is_file():
-            run_cmd(
-                [
-                    "uv",
-                    "run",
-                    "scripts/prepare_dataset.py",
-                    "--dataset",
-                    "squad",
-                    "--output",
-                    str(RAW_DATA_PATH),
-                    "--train-rows",
-                    "16",
-                    "--validation-rows",
-                    "8",
-                ]
-            )
-
-        if os.getenv("OPENAI_API_KEY"):
-            run_cmd(
-                [
-                    "uv",
-                    "run",
-                    "doc2atom-atomize",
-                    "--provider",
-                    "openai",
-                    "--input",
-                    str(RAW_DATA_PATH),
-                    "--output",
-                    str(ATOM_DATA_PATH),
-                    "--resume",
-                    "--retry-invalid",
-                ]
-            )
-            _data = ATOM_DATA_PATH
-        elif ATOM_DATA_PATH.is_file():
-            print(
-                "OPENAI_API_KEY không khả dụng; dùng lại dataset atomized "
-                f"{ATOM_DATA_PATH}."
-            )
-            _data = ATOM_DATA_PATH
-        else:
-            raise RuntimeError("Thiếu OPENAI_API_KEY và chưa có atomized dataset.")
-
+def _(ATOM_DATA_PATH, RAW_DATA_PATH, os, run_cmd):
+    if not RAW_DATA_PATH.is_file():
         run_cmd(
             [
                 "uv",
                 "run",
-                "doc2atom-validate",
-                "--input",
-                str(_data),
-                "--source",
+                "scripts/prepare_dataset.py",
+                "--dataset",
+                "squad",
+                "--output",
                 str(RAW_DATA_PATH),
-                "--reject-span-mismatch",
+                "--train-rows",
+                "16",
+                "--validation-rows",
+                "8",
             ]
         )
-        run_cmd(
-            [
-                "uv", "run", "scripts/audit_semantics.py",
-                "--input", str(_data), "--source", str(RAW_DATA_PATH),
-            ]
-        )
-    return
 
-
-@app.cell
-def _(mo):
-    preflight_button = mo.ui.run_button(label="3. Chạy GPU preflight 1 optimizer step")
-    mo.vstack(
-        [
-            mo.md(
-                """
-                ## 3. GPU preflight
-
-                Chạy một optimizer step, một question và tắt BGE reranker. Mỗi lần bấm tạo output
-                directory mới nên không đè run manifest cũ.
-                """
-            ),
-            preflight_button,
-        ]
-    )
-    return (preflight_button,)
-
-
-@app.cell
-def _(
-    CONFIG_PATH,
-    REPO_DIR,
-    datetime,
-    preflight_button,
-    run_cmd,
-    selected_atom_data,
-    timezone,
-):
-    if preflight_button.value:
-        _stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        _output = REPO_DIR / "outputs" / f"molab-gpu-check-{_stamp}"
+    if os.getenv("OPENAI_API_KEY"):
         run_cmd(
             [
                 "uv",
                 "run",
-                "doc2atom-train",
-                "--config",
-                str(CONFIG_PATH),
-                "--data",
-                str(selected_atom_data()),
+                "doc2atom-atomize",
+                "--provider",
+                "openai",
+                "--input",
+                str(RAW_DATA_PATH),
                 "--output",
-                str(_output),
-                "--max-steps",
-                "1",
-                "--max-questions",
-                "1",
-                "--no-reranker",
-                "--wandb-mode",
-                "online",
-            ]
-        )
-        print(f"GPU preflight hoàn tất: {_output}")
-    return
-
-
-@app.cell
-def _(OUTPUT_DIR, mo):
-    fresh_train_button = mo.ui.run_button(label="4A. Bắt đầu fresh training")
-    resume_train_button = mo.ui.run_button(label="4B. Resume checkpoint mới nhất")
-    mo.vstack(
-        [
-            mo.md(
-                f"""
-                ## 4. Single-GPU training
-
-                Output cố định: `{OUTPUT_DIR}`.
-
-                Fresh và resume là hai hành động riêng để tránh tự resume nhầm run.
-                """
-            ),
-            mo.hstack([fresh_train_button, resume_train_button]),
-        ]
-    )
-    return fresh_train_button, resume_train_button
-
-
-@app.cell
-def _(
-    CONFIG_PATH,
-    OUTPUT_DIR,
-    fresh_train_button,
-    resolve_latest_checkpoint,
-    run_cmd,
-    selected_atom_data,
-):
-    if fresh_train_button.value:
-        if (OUTPUT_DIR / "manifests" / "run.json").exists() or resolve_latest_checkpoint(
-            OUTPUT_DIR
-        ):
-            raise RuntimeError(
-                f"{OUTPUT_DIR} đã chứa một run. Hãy dùng Resume hoặc đổi OUTPUT_DIR."
-            )
-        run_cmd(
-            [
-                "uv",
-                "run",
-                "doc2atom-train",
-                "--config",
-                str(CONFIG_PATH),
-                "--data",
-                str(selected_atom_data()),
-                "--output",
-                str(OUTPUT_DIR),
-                "--wandb-mode",
-                "online",
-                "--wandb-project",
-                "doc-to-atom",
-            ]
-        )
-    return
-
-
-@app.cell
-def _(
-    CONFIG_PATH,
-    OUTPUT_DIR,
-    resolve_latest_checkpoint,
-    resume_train_button,
-    run_cmd,
-    selected_atom_data,
-):
-    if resume_train_button.value:
-        _checkpoint = resolve_latest_checkpoint(OUTPUT_DIR)
-        if _checkpoint is None:
-            raise FileNotFoundError(
-                f"Không tìm thấy {OUTPUT_DIR / 'checkpoints' / 'last.json'} để resume."
-            )
-        run_cmd(
-            [
-                "uv",
-                "run",
-                "doc2atom-train",
-                "--config",
-                str(CONFIG_PATH),
-                "--data",
-                str(selected_atom_data()),
-                "--output",
-                str(OUTPUT_DIR),
+                str(ATOM_DATA_PATH),
                 "--resume",
-                "latest",
-                "--wandb-mode",
-                "online",
-                "--wandb-project",
-                "doc-to-atom",
+                "--retry-invalid",
+            ]
+        )
+        _data = ATOM_DATA_PATH
+    elif ATOM_DATA_PATH.is_file():
+        print(
+            "OPENAI_API_KEY không khả dụng; dùng lại dataset atomized "
+            f"{ATOM_DATA_PATH}."
+        )
+        _data = ATOM_DATA_PATH
+    else:
+        raise RuntimeError("Thiếu OPENAI_API_KEY và chưa có atomized dataset.")
+
+    run_cmd(
+        [
+            "uv",
+            "run",
+            "doc2atom-validate",
+            "--input",
+            str(_data),
+            "--source",
+            str(RAW_DATA_PATH),
+            "--reject-span-mismatch",
+        ]
+    )
+    run_cmd(
+        [
+            "uv", "run", "scripts/audit_semantics.py",
+            "--input", str(_data), "--source", str(RAW_DATA_PATH),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    # _stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    # _output = REPO_DIR / "outputs" / f"molab-gpu-check-{_stamp}"
+    # run_cmd(
+    #     [
+    #         "uv",
+    #         "run",
+    #         "doc2atom-train",
+    #         "--config",
+    #         str(CONFIG_PATH),
+    #         "--data",
+    #         str(selected_atom_data()),
+    #         "--output",
+    #         str(_output),
+    #         "--max-steps",
+    #         "1",
+    #         "--max-questions",
+    #         "1",
+    #         "--no-reranker",
+    #         "--wandb-mode",
+    #         "online",
+    #     ]
+    # )
+    # print(f"GPU preflight hoàn tất: {_output}")
+    return
+
+
+@app.cell
+def _(
+    CONFIG_PATH,
+    OUTPUT_DIR,
+    resolve_latest_checkpoint,
+    run_cmd,
+    selected_atom_data,
+):
+    if (OUTPUT_DIR / "manifests" / "run.json").exists() or resolve_latest_checkpoint(
+        OUTPUT_DIR
+    ):
+        raise RuntimeError(
+            f"{OUTPUT_DIR} đã chứa một run. Hãy dùng Resume hoặc đổi OUTPUT_DIR."
+        )
+    run_cmd(
+        [
+            "uv",
+            "run",
+            "doc2atom-train",
+            "--config",
+            str(CONFIG_PATH),
+            "--data",
+            str(selected_atom_data()),
+            "--output",
+            str(OUTPUT_DIR),
+            "--wandb-mode",
+            "online",
+            "--wandb-project",
+            "doc-to-atom",
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    # _checkpoint = resolve_latest_checkpoint(OUTPUT_DIR)
+    # if _checkpoint is None:
+    #     raise FileNotFoundError(
+    #         f"Không tìm thấy {OUTPUT_DIR / 'checkpoints' / 'last.json'} để resume."
+    #     )
+    # run_cmd(
+    #     [
+    #         "uv",
+    #         "run",
+    #         "doc2atom-train",
+    #         "--config",
+    #         str(CONFIG_PATH),
+    #         "--data",
+    #         str(selected_atom_data()),
+    #         "--output",
+    #         str(OUTPUT_DIR),
+    #         "--resume",
+    #         "latest",
+    #         "--wandb-mode",
+    #         "online",
+    #         "--wandb-project",
+    #         "doc-to-atom",
+    #     ]
+    # )
+    return
+
+
+@app.cell
+def _():
+    # _runs = find_offline_wandb_runs(OUTPUT_DIR / "wandb")
+    # if not _runs:
+    #     print("Không tìm thấy W&B offline run để đồng bộ.")
+    # for _run in _runs:
+    #     run_cmd(["uv", "run", "wandb", "sync", str(_run)], check=False)
+    return
+
+
+@app.cell
+def _(OUTPUT_DIR, PRED_EVAL_PATH, RAW_DATA_PATH, run_cmd, selected_atom_data):
+    if PRED_EVAL_PATH.is_file():
+        run_cmd(["uv", "run", "doc2atom-evaluate", "--predictions", str(PRED_EVAL_PATH)])
+    else:
+        _snapshot = OUTPUT_DIR / "config" / "resolved.yaml"
+        _best = OUTPUT_DIR / "checkpoints" / "best.json"
+        _last = OUTPUT_DIR / "checkpoints" / "last.json"
+        _checkpoint = _best if _best.is_file() else _last
+        if not _checkpoint.is_file():
+            raise FileNotFoundError(f"Chưa có best/last checkpoint trong {OUTPUT_DIR}.")
+        if not _snapshot.is_file():
+            raise FileNotFoundError(f"Chưa có config snapshot: {_snapshot}.")
+        if not RAW_DATA_PATH.is_file():
+            raise FileNotFoundError(f"Chưa có source dataset: {RAW_DATA_PATH}.")
+        run_cmd(
+            [
+                "uv", "run", "doc2atom-evaluate",
+                "--config", str(_snapshot),
+                "--data", str(selected_atom_data()),
+                "--source", str(RAW_DATA_PATH),
+                "--checkpoint", str(_checkpoint),
+                "--output", str(PRED_EVAL_PATH),
+                "--split", "validation",
             ]
         )
     return
 
 
 @app.cell
-def _(mo):
-    sync_button = mo.ui.run_button(label="5. Đồng bộ các W&B offline run")
-    score_button = mo.ui.run_button(label="6. Generate và chấm validation")
-    mo.vstack(
-        [
-            mo.md(
-                """
-                ## 5–6. Đồng bộ và evaluation
+def _():
+    # outputs_dir = REPO_DIR / "outputs"
 
-                Nếu chưa có predictions, notebook dùng checkpoint best (hoặc last), config snapshot,
-                atomized data và source JSONL để generate rồi chấm validation. Nếu predictions
-                đã tồn tại, notebook chỉ chấm lại file đó, không ghi đè.
-                """
-            ),
-            mo.hstack([sync_button, score_button]),
-        ]
-    )
-    return score_button, sync_button
+    # if not outputs_dir.exists() or not any(outputs_dir.iterdir()):
+    #     raise FileNotFoundError(f"Thư mục outputs rỗng hoặc không tồn tại: {outputs_dir}")
 
+    # # Đặt tên file nén theo mốc thời gian
+    # timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    # zip_base_path = REPO_DIR / f"outputs_{timestamp}"
 
-@app.cell
-def _(OUTPUT_DIR, find_offline_wandb_runs, run_cmd, sync_button):
-    if sync_button.value:
-        _runs = find_offline_wandb_runs(OUTPUT_DIR / "wandb")
-        if not _runs:
-            print("Không tìm thấy W&B offline run để đồng bộ.")
-        for _run in _runs:
-            run_cmd(["uv", "run", "wandb", "sync", str(_run)], check=False)
-    return
+    # print(f"📦 Đang đóng gói toàn bộ thư mục: {outputs_dir}...")
 
+    # # 1. Tạo tệp .zip cục bộ
+    # archive_path = shutil.make_archive(
+    #     base_name=str(zip_base_path),
+    #     format="zip",
+    #     root_dir=str(outputs_dir.parent),
+    #     base_dir=outputs_dir.name,
+    # )
+    # print(f"✓ Đã tạo thành công file nén cục bộ: {archive_path}")
 
-@app.cell
-def _(OUTPUT_DIR, PRED_EVAL_PATH, RAW_DATA_PATH, run_cmd, score_button, selected_atom_data):
-    if score_button.value:
-        if PRED_EVAL_PATH.is_file():
-            run_cmd(["uv", "run", "doc2atom-evaluate", "--predictions", str(PRED_EVAL_PATH)])
-        else:
-            _snapshot = OUTPUT_DIR / "config" / "resolved.yaml"
-            _best = OUTPUT_DIR / "checkpoints" / "best.json"
-            _last = OUTPUT_DIR / "checkpoints" / "last.json"
-            _checkpoint = _best if _best.is_file() else _last
-            if not _checkpoint.is_file():
-                raise FileNotFoundError(f"Chưa có best/last checkpoint trong {OUTPUT_DIR}.")
-            if not _snapshot.is_file():
-                raise FileNotFoundError(f"Chưa có config snapshot: {_snapshot}.")
-            if not RAW_DATA_PATH.is_file():
-                raise FileNotFoundError(f"Chưa có source dataset: {RAW_DATA_PATH}.")
-            run_cmd(
-                [
-                    "uv", "run", "doc2atom-evaluate",
-                    "--config", str(_snapshot),
-                    "--data", str(selected_atom_data()),
-                    "--source", str(RAW_DATA_PATH),
-                    "--checkpoint", str(_checkpoint),
-                    "--output", str(PRED_EVAL_PATH),
-                    "--split", "validation",
-                ]
-            )
+    # # 2. Thử đẩy tệp .zip lên Google Drive qua gdrive_fsspec (nếu có cấu hình)
+    # try:
+    #     from gdrive_fsspec import GoogleDriveFileSystem
+
+    #     print("☁️ Đang kết nối Google Drive và upload...")
+    #     fs = GoogleDriveFileSystem(
+    #         root_path="VietDocMemory/molab",
+    #         use_listings_cache=False,
+    #         skip_instance_cache=True,
+    #         auth_kwargs={"use_local_webserver": False},
+    #     )
+
+    #     drive_target = f"VietDocMemory/molab/outputs_{timestamp}.zip"
+    #     fs.put(archive_path, drive_target)
+    #     print(f"✅ Đã tải tệp lên Google Drive tại đường dẫn: {drive_target}")
+    # except Exception as e:
+    #     print(f"⚠️ Không thể upload tự động lên Drive ({e}). File zip vẫn được bảo toàn tại: {archive_path}")
     return
 
 

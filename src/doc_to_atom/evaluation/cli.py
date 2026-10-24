@@ -8,7 +8,12 @@ from pathlib import Path
 
 import torch
 
-from doc_to_atom.config import config_fingerprint, load_config, load_project_env
+from doc_to_atom.config import (
+    config_fingerprint,
+    legacy_config_fingerprint,
+    load_config,
+    load_project_env,
+)
 from doc_to_atom.data.io import read_jsonl, validate_jsonl
 from doc_to_atom.evaluation.metrics import refusal_f1, rouge_l, word_f1
 from doc_to_atom.inference.query import QueryEngine
@@ -150,6 +155,10 @@ def main() -> None:
         if not records:
             raise ValueError(f"no records for split {args.split}")
         config = load_config(args.config)
+        expected_config_fingerprints = {
+            config_fingerprint(config),
+            legacy_config_fingerprint(config),
+        }
         system, tokenizer, _targets = build_system(config, enable_reranker=not args.no_reranker)
         modules = {
             "encoder_projection": system.encoder.projection,
@@ -158,7 +167,7 @@ def main() -> None:
         }
         state = load_training_checkpoint(
             modules, _checkpoint_directory(Path(args.checkpoint)),
-            expected_fingerprints={"config": config_fingerprint(config)}, restore_rng=False,
+            expected_fingerprints={"config": expected_config_fingerprints}, restore_rng=False,
         )
         system.eval()
         if torch.cuda.is_available():

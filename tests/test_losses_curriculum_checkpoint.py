@@ -141,6 +141,15 @@ def test_checkpoint_rejects_uncommitted_and_incompatible_state(tmp_path: Path):
         )
 
 
+def test_checkpoint_accepts_one_of_multiple_compatible_fingerprints() -> None:
+    state = checkpoint_module.TrainerState(config_fingerprint="legacy-config-hash")
+
+    checkpoint_module._validate_fingerprints(
+        state,
+        {"config": {"semantic-config-hash", "legacy-config-hash"}},
+    )
+
+
 def test_legacy_checkpoint_requires_explicit_weights_only_migration(tmp_path: Path):
     source = nn.Linear(2, 1)
     legacy = tmp_path / "legacy.pt"

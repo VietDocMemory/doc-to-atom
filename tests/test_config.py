@@ -105,6 +105,63 @@ def test_canonical_serialization_and_fingerprint_ignore_mapping_order() -> None:
     assert len(config_module.config_fingerprint(left)) == 64
 
 
+def test_config_fingerprint_ignores_runtime_environment_overrides() -> None:
+    trained = {
+        "model": {
+            "name": "example/model",
+            "flash_attention_2": True,
+        },
+        "runtime": {
+            "device": "cuda:0",
+            "reranker_device": "cuda:0",
+            "output_dir": "/content/drive/MyDrive/doc-to-atom/run-1",
+            "cache_dir": "/content/huggingface-cache",
+        },
+        "training": {"learning_rate": 0.001},
+    }
+    evaluated = {
+        "model": {
+            "name": "example/model",
+            "flash_attention_2": False,
+            "attn_implementation": "sdpa",
+        },
+        "runtime": {
+            "device": "cuda:1",
+            "reranker_device": "cuda:1",
+            "output_dir": "/content/drive/MyDrive/doc-to-atom/evaluation",
+            "cache_dir": "/content/cache",
+        },
+        "training": {"learning_rate": 0.001},
+    }
+
+    assert config_module.config_fingerprint(trained) == config_module.config_fingerprint(evaluated)
+
+
+def test_legacy_config_fingerprint_retains_runtime_environment() -> None:
+    flash = {"model": {"name": "example/model", "flash_attention_2": True}}
+    sdpa = {"model": {"name": "example/model", "attn_implementation": "sdpa"}}
+
+    flash_fingerprint = config_module.legacy_config_fingerprint(flash)
+    sdpa_fingerprint = config_module.legacy_config_fingerprint(sdpa)
+
+    assert flash_fingerprint != sdpa_fingerprint
+
+
+def test_config_fingerprint_keeps_training_semantics_strict() -> None:
+    baseline = {
+        "model": {"name": "example/model", "flash_attention_2": True},
+        "runtime": {"device": "cuda"},
+        "training": {"learning_rate": 0.001},
+    }
+    changed = {
+        "model": {"name": "example/model", "flash_attention_2": False},
+        "runtime": {"device": "cpu"},
+        "training": {"learning_rate": 0.002},
+    }
+
+    assert config_module.config_fingerprint(baseline) != config_module.config_fingerprint(changed)
+
+
 def test_checked_in_config_families_are_classified_and_runnable() -> None:
     root = Path(__file__).resolve().parents[1]
     paper = config_module.load_and_resolve_config(root / "configs/paper_like/base.yaml")
