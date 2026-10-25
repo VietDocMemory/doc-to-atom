@@ -7,6 +7,7 @@ from doc_to_atom.composer.model import MemoryComposer
 from doc_to_atom.encoder.shared import SharedAtomQueryEncoder
 from doc_to_atom.injection.lora import DynamicLoRAInjector
 from doc_to_atom.router.model import TwoStageRouter
+from doc_to_atom.inference.answer_format import build_qa_prompt, generate_short_answer
 
 
 class QueryEngine:
@@ -33,10 +34,7 @@ class QueryEngine:
         query_encoded = self.tokenizer(query, return_tensors="pt").to(
             next(self.model.parameters()).device
         )
-        generation_prompt = f"Question: {query}\nAnswer:"
-        generation_inputs = self.tokenizer(generation_prompt, return_tensors="pt").to(
-            next(self.model.parameters()).device
-        )
+        generation_prompt = build_qa_prompt(query)
         query_embedding = self.encoder.encode_queries(**query_encoded)
         routed = self.router(query_embedding, bank.keys, bank.atoms or [], query, top_k)
         composed = self.composer(bank, routed.selected_indices, routed.routing_weights)
@@ -47,14 +45,11 @@ class QueryEngine:
         )
         ranked_indices = routed.stage1_indices[torch.argsort(candidate_scores, descending=True)]
         with self.injector.activate(composed):
-            output = self.model.generate(
-                **generation_inputs, do_sample=False, max_new_tokens=max_new_tokens
+            generation = generate_short_answer(
+                self.model, self.tokenizer, generation_prompt, max_new_tokens=max_new_tokens
             )
-        prediction = self.tokenizer.decode(
-            output[0, generation_inputs["input_ids"].shape[1] :], skip_special_tokens=True
-        )
         return {
-            "prediction": prediction,
+            **generation,
             "selected_atom_ids": [
                 (bank.atoms or [])[i].atom_id for i in routed.selected_indices.tolist()
             ],

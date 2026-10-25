@@ -34,6 +34,7 @@ doc2atom-validate = "doc_to_atom.data.validation_cli:main"
 doc2atom-smoke = "doc_to_atom.training.smoke:main"
 doc2atom-train = "doc_to_atom.training.cli:main"
 doc2atom-evaluate = "doc_to_atom.evaluation.cli:main"
+doc2atom-compare = "doc_to_atom.evaluation.compare:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

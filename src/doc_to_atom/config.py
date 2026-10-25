@@ -186,8 +186,12 @@ def validate_config(config: dict[str, Any], *, require_runnable: bool = False) -
     interval = training.get("checkpoint_every_steps", 1000)
     if type(interval) is not int or interval < 1:
         raise ConfigError("training.checkpoint_every_steps must be a positive integer")
-    if runtime.get("checkpoint_upload", "best_weights") not in {"best_weights", "none"}:
-        raise ConfigError("runtime.checkpoint_upload must be best_weights or none")
+    if runtime.get("checkpoint_upload", "best_weights") not in {
+        "best_weights", "best_weights_and_last_full", "none"
+    }:
+        raise ConfigError(
+            "runtime.checkpoint_upload must be best_weights, best_weights_and_last_full, or none"
+        )
     if require_runnable:
         try:
             require_disclosed_training_values(config)

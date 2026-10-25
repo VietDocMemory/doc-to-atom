@@ -91,7 +91,21 @@ class RunTracker:
         else:
             self.log_file(resolved)
 
-    def log_best_weights(self, checkpoint: str | Path, *, optimizer_step: int) -> None:
+    def _artifact_status(self, handle: Any, *, checkpoint: Path, optimizer_step: int, name: str) -> dict:
+        status = "disabled" if self._run is None else "offline_pending"
+        if self._run is not None and self.mode == "online":
+            if handle is None or not callable(getattr(handle, "wait", None)):
+                raise RuntimeError("online W&B artifact did not return a waitable upload handle")
+            handle.wait()
+            status = "uploaded"
+        return {
+            "status": status,
+            "checkpoint": checkpoint.name,
+            "optimizer_step": optimizer_step,
+            "artifact": name,
+        }
+
+    def log_best_weights(self, checkpoint: str | Path, *, optimizer_step: int) -> dict:
         """Upload one model-only best artifact, never exact-resume state or raw responses."""
         root = Path(checkpoint).resolve()
         weights = root / "model.safetensors"
@@ -102,12 +116,13 @@ class RunTracker:
         self.context.log_event(
             "best_model", {"path": str(weights), "optimizer_step": optimizer_step}
         )
+        name = f"{self.context.run_id}-best-model"
         if self._run is None:
-            return
+            return self._artifact_status(None, checkpoint=root, optimizer_step=optimizer_step, name=name)
         import wandb
 
         artifact = wandb.Artifact(
-            name=f"{self.context.run_id}-best-model",
+            name=name,
             type="model",
             metadata={
                 "optimizer_step": optimizer_step,
@@ -120,7 +135,44 @@ class RunTracker:
             name="config/resolved.yaml",
         )
         artifact.add_file(str(self.context.run_manifest_path), name="manifests/run.json")
-        self._run.log_artifact(artifact, aliases=["best"])
+        handle = self._run.log_artifact(artifact, aliases=["best"])
+        return self._artifact_status(handle, checkpoint=root, optimizer_step=optimizer_step, name=name)
+
+    def log_last_checkpoint(self, checkpoint: str | Path, *, optimizer_step: int) -> dict:
+        """Publish the full committed checkpoint, including optimizer and RNG state."""
+        root = Path(checkpoint).resolve()
+        if not root.is_dir():
+            raise FileNotFoundError(f"last checkpoint does not exist: {root}")
+        name = f"{self.context.run_id}-last-checkpoint"
+        files = [
+            path for path in sorted(root.rglob("*"))
+            if path.is_file() and ".raw-responses" not in path.name
+        ]
+        if not files:
+            raise FileNotFoundError(f"last checkpoint is empty: {root}")
+        self.context.log_event(
+            "last_checkpoint", {"path": str(root), "optimizer_step": optimizer_step}
+        )
+        if self._run is None:
+            return self._artifact_status(None, checkpoint=root, optimizer_step=optimizer_step, name=name)
+        import wandb
+
+        artifact = wandb.Artifact(
+            name=name, type="checkpoint",
+            metadata={
+                "optimizer_step": optimizer_step,
+                "config_fingerprint": self.context.config_fingerprint,
+            },
+        )
+        for path in files:
+            artifact.add_file(str(path), name=f"checkpoint/{path.relative_to(root).as_posix()}")
+        artifact.add_file(
+            str(self.context.root / "config" / "resolved.yaml"),
+            name="config/resolved.yaml",
+        )
+        artifact.add_file(str(self.context.run_manifest_path), name="manifests/run.json")
+        handle = self._run.log_artifact(artifact, aliases=["last"])
+        return self._artifact_status(handle, checkpoint=root, optimizer_step=optimizer_step, name=name)
 
     def finish(self) -> None:
         if self._run is not None:

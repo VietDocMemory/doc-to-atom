@@ -202,3 +202,13 @@ def test_invalid_checkpoint_policy_is_rejected(section, key, value):
     with pytest.raises(config_module.ConfigError, match=key):
         config_module.validate_config(config)
 
+
+def test_best_weights_and_last_full_upload_policy_is_accepted():
+    config = {
+        "profile": {"name": "test", "family": "reconstruction"},
+        "assumptions": [], "deviations": [],
+        "training": {"checkpoint_every_steps": 10, "checkpoint_retention": "best_last"},
+        "runtime": {"checkpoint_upload": "best_weights_and_last_full"},
+    }
+    config_module.validate_config(config)
+

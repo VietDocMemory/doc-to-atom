@@ -699,29 +699,56 @@ def run_training(
         )
         if saved_step != optimizer_step:
             save_state(next_epoch, next_cursor)
+    policy = config.get("runtime", {}).get("checkpoint_upload", "best_weights")
     if (
-        runtime.is_main_process
-        and tracker is not None
+        runtime.is_main_process and tracker is not None
         and (stopped or optimizer_step >= total_steps or next_epoch >= max_epochs)
-        and config.get("runtime", {}).get("checkpoint_upload", "best_weights") == "best_weights"
-        and (checkpoint_dir / "best.json").is_file()
+        and policy != "none"
     ):
-        best_path = _resume_path(checkpoint_dir / "best.json")
-        best_step = int(json.loads((checkpoint_dir / "best.json").read_text())["optimizer_step"])
-        upload_marker = output_dir / "manifests" / "best_model_upload.json"
-        uploaded = None
-        if upload_marker.is_file():
+        def publish_artifact(pointer_name: str, marker_name: str, upload):
+            pointer = checkpoint_dir / pointer_name
+            if not pointer.is_file():
+                return
+            info = json.loads(pointer.read_text(encoding="utf-8"))
+            path = _resume_path(pointer)
+            step = int(info["optimizer_step"])
+            identity = {"checkpoint": path.name, "optimizer_step": step}
+            marker = output_dir / "manifests" / marker_name
+            previous = None
+            if marker.is_file():
+                try:
+                    previous = json.loads(marker.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            if previous is not None and all(previous.get(k) == v for k, v in identity.items()):
+                previous_status = previous.get("status")
+                if (
+                    previous_status == "uploaded"
+                    or (previous_status == "offline_pending" and tracker.mode == "offline")
+                    or (previous_status == "disabled" and tracker.mode == "disabled")
+                    or (previous_status is None and tracker.mode != "online")
+                ):
+                    return
             try:
-                uploaded = json.loads(upload_marker.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                pass
-        if uploaded != {"checkpoint": best_path.name, "optimizer_step": best_step}:
-            verify_committed_checkpoint(
-                best_path, optimizer_step=best_step, distributed=runtime.is_distributed
-            )
-            tracker.log_best_weights(best_path, optimizer_step=best_step)
-            atomic_write_json(
-                upload_marker, {"checkpoint": best_path.name, "optimizer_step": best_step}
+                verify_committed_checkpoint(
+                    path, optimizer_step=step, distributed=runtime.is_distributed
+                )
+                result = upload(path, optimizer_step=step)
+                # Older custom trackers return None. Preserve their two-field marker.
+                details = result if isinstance(result, dict) else {}
+                atomic_write_json(marker, {**identity, **details})
+            except Exception as exc:
+                LOGGER.warning("checkpoint artifact upload failed: %s", exc)
+                if hasattr(tracker, "context"):
+                    tracker.context.log_warning(
+                        "checkpoint_artifact_upload_failed", str(exc),
+                        checkpoint=str(path), marker=marker_name,
+                    )
+
+        publish_artifact("best.json", "best_model_upload.json", tracker.log_best_weights)
+        if policy == "best_weights_and_last_full":
+            publish_artifact(
+                "last.json", "last_checkpoint_upload.json", tracker.log_last_checkpoint
             )
     best_validation = (
         float("inf")

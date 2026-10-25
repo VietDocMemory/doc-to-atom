@@ -221,3 +221,63 @@ def test_best_weights_artifact_selects_distributed_portable_model(tmp_path: Path
         "model.safetensors", "config/resolved.yaml", "manifests/run.json"
     }
 
+
+def test_last_artifact_contains_exact_resume_state_and_excludes_raw_responses(tmp_path: Path):
+    class CapturingRun(_FakeRun):
+        def log_artifact(self, artifact, aliases=None):
+            self.artifact, self.aliases = artifact, aliases
+            return None
+
+    context = run_module.RunContext.create(tmp_path / "run", config=_config(), command=["train"])
+    run = CapturingRun()
+    tracker = tracking_module.RunTracker.create(
+        context, mode="offline", project="tests", initializer=lambda **kwargs: run
+    )
+    checkpoint = context.root / "checkpoints" / "step-00000008"
+    (checkpoint / "portable").mkdir(parents=True)
+    (checkpoint / "accelerate").mkdir()
+    for name in ("distributed.json", "portable/model.safetensors", "accelerate/optimizer.bin", "state.json"):
+        (checkpoint / name).write_bytes(b"state")
+    (checkpoint / "probe.raw-responses.jsonl").write_bytes(b"private")
+
+    result = tracker.log_last_checkpoint(checkpoint, optimizer_step=8)
+
+    assert result["status"] == "offline_pending"
+    assert run.aliases == ["last"]
+    assert set(run.artifact.manifest.entries) == {
+        "checkpoint/distributed.json", "checkpoint/portable/model.safetensors",
+        "checkpoint/accelerate/optimizer.bin", "checkpoint/state.json",
+        "config/resolved.yaml", "manifests/run.json",
+    }
+
+
+def test_online_artifact_waits_for_upload_before_durable_status(tmp_path: Path):
+    class Handle:
+        def __init__(self):
+            self.waited = False
+
+        def wait(self):
+            self.waited = True
+
+    class CapturingRun(_FakeRun):
+        def __init__(self):
+            super().__init__()
+            self.handle = Handle()
+
+        def log_artifact(self, artifact, aliases=None):
+            return self.handle
+
+    context = run_module.RunContext.create(tmp_path / "run", config=_config(), command=["train"])
+    run = CapturingRun()
+    tracker = tracking_module.RunTracker.create(
+        context, mode="online", project="tests", initializer=lambda **kwargs: run
+    )
+    checkpoint = context.root / "checkpoints" / "step-00000001"
+    checkpoint.mkdir()
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+
+    result = tracker.log_best_weights(checkpoint, optimizer_step=1)
+
+    assert run.handle.waited
+    assert result["status"] == "uploaded"
+

@@ -48,26 +48,16 @@ def _(Path, os, shutil, subprocess, sys):
         """Kiểm tra và cập nhật repository từ GitHub."""
         git_dir = TARGET_DIR / ".git"
 
-        # Nếu repo đã tồn tại, tiến hành fetch và hard reset về origin/main
+        # Chỉ fast-forward khi repo sạch; giữ nguyên dữ liệu/checkpoints đang có.
         if TARGET_DIR.exists() and git_dir.exists():
             print(f"Đang cập nhật mã nguồn mới nhất từ {REPO_URL} (nhánh {BRANCH})...")
-            steps = [
-                ["git", "fetch", "origin", BRANCH],
-                ["git", "checkout", BRANCH],
-                ["git", "reset", "--hard", f"origin/{BRANCH}"],
-                ["git", "clean", "-fd"],
-            ]
+            if not run_command(["git", "pull", "--ff-only", "origin", BRANCH], cwd=TARGET_DIR):
+                raise RuntimeError("Không thể fast-forward repo; kiểm tra local changes trước.")
+            return
 
-            success = all(run_command(cmd, cwd=TARGET_DIR) for cmd in steps)
-            if success:
-                print("Đã cập nhật thành công local repo về nhánh origin/main mới nhất!")
-                return
-            print("Cập nhật bằng git reset thất bại. Tiến hành clone lại từ đầu...")
-
-        # Nếu repo chưa có hoặc bị lỗi, xóa thư mục cũ và clone lại
+        # Không xóa thư mục có sẵn khi chưa rõ nội dung.
         if TARGET_DIR.exists():
-            print(f"🧹 Đang xóa thư mục cũ: {TARGET_DIR}")
-            shutil.rmtree(TARGET_DIR)
+            raise FileExistsError(f"Thư mục {TARGET_DIR} đã tồn tại nhưng không phải Git repo.")
 
         TARGET_DIR.parent.mkdir(parents=True, exist_ok=True)
 
@@ -99,7 +89,23 @@ def _(Path, os, shutil, subprocess, sys):
         print("Đã đồng bộ xong môi trường Python trên Molab!")
 
 
-    if __name__ == "__main__":
+    return update_repo, sync_dependencies
+
+
+@app.cell
+def _(mo):
+    setup_button = mo.ui.run_button(label="Cập nhật repo và cài dependencies")
+    prepare_button = mo.ui.run_button(label="Chuẩn bị và atomize dữ liệu")
+    train_button = mo.ui.run_button(label="Train")
+    resume_button = mo.ui.run_button(label="Resume")
+    score_button = mo.ui.run_button(label="Evaluate")
+    mo.vstack([setup_button, prepare_button, train_button, resume_button, score_button])
+    return prepare_button, resume_button, score_button, setup_button, train_button
+
+
+@app.cell
+def _(setup_button, update_repo, sync_dependencies):
+    if setup_button.value:
         update_repo()
         sync_dependencies()
     return
@@ -171,7 +177,7 @@ def _(Path, REPO_DIR, os, shutil, subprocess):
     # OUTPUT_DIR2 = REPO_DIR / "outputs" / "molab-gpu-check-20261024-043425"
     RAW_DATA_PATH = DATA_DIR / "squad_molab_raw.jsonl"
     ATOM_DATA_PATH = DATA_DIR / "squad_molab_atoms.jsonl"
-    PRED_EVAL_PATH = OUTPUT_DIR / "predictions.jsonl"
+    PRED_EVAL_PATH = OUTPUT_DIR / "predictions" / "validation.jsonl"
     CONFIG_PATH = REPO_DIR / "configs" / "reconstruction" / "molab_single_gpu.yaml"
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -217,7 +223,9 @@ def _(Path, REPO_DIR, os, shutil, subprocess):
 
 
 @app.cell
-def _(run_cmd):
+def _(run_cmd, setup_button):
+    if not setup_button.value:
+        return
     _script = (
         "import os, torch; "
         "print('torch:', torch.__version__); "
@@ -239,7 +247,9 @@ def _():
 
 
 @app.cell
-def _(ATOM_DATA_PATH, RAW_DATA_PATH, os, run_cmd):
+def _(ATOM_DATA_PATH, RAW_DATA_PATH, os, prepare_button, run_cmd):
+    if not prepare_button.value:
+        return
     if not RAW_DATA_PATH.is_file():
         run_cmd(
             [
@@ -339,7 +349,10 @@ def _(
     resolve_latest_checkpoint,
     run_cmd,
     selected_atom_data,
+    train_button,
 ):
+    if not train_button.value:
+        return
     if (OUTPUT_DIR / "manifests" / "run.json").exists() or resolve_latest_checkpoint(
         OUTPUT_DIR
     ):
@@ -367,31 +380,24 @@ def _(
 
 
 @app.cell
-def _():
-    # _checkpoint = resolve_latest_checkpoint(OUTPUT_DIR)
-    # if _checkpoint is None:
-    #     raise FileNotFoundError(
-    #         f"Không tìm thấy {OUTPUT_DIR / 'checkpoints' / 'last.json'} để resume."
-    #     )
-    # run_cmd(
-    #     [
-    #         "uv",
-    #         "run",
-    #         "doc2atom-train",
-    #         "--config",
-    #         str(CONFIG_PATH),
-    #         "--data",
-    #         str(selected_atom_data()),
-    #         "--output",
-    #         str(OUTPUT_DIR),
-    #         "--resume",
-    #         "latest",
-    #         "--wandb-mode",
-    #         "online",
-    #         "--wandb-project",
-    #         "doc-to-atom",
-    #     ]
-    # )
+def _(CONFIG_PATH, OUTPUT_DIR, resolve_latest_checkpoint, resume_button, run_cmd, selected_atom_data):
+    if not resume_button.value:
+        return
+    if resolve_latest_checkpoint(OUTPUT_DIR) is None:
+        raise FileNotFoundError(
+            f"Không tìm thấy {OUTPUT_DIR / 'checkpoints' / 'last.json'} để resume."
+        )
+    run_cmd(
+        [
+            "uv", "run", "doc2atom-train",
+            "--config", str(CONFIG_PATH),
+            "--data", str(selected_atom_data()),
+            "--output", str(OUTPUT_DIR),
+            "--resume", "latest",
+            "--wandb-mode", "online",
+            "--wandb-project", "doc-to-atom",
+        ]
+    )
     return
 
 
@@ -406,7 +412,9 @@ def _():
 
 
 @app.cell
-def _(OUTPUT_DIR, PRED_EVAL_PATH, RAW_DATA_PATH, run_cmd, selected_atom_data):
+def _(OUTPUT_DIR, PRED_EVAL_PATH, RAW_DATA_PATH, run_cmd, score_button, selected_atom_data):
+    if not score_button.value:
+        return
     if PRED_EVAL_PATH.is_file():
         run_cmd(["uv", "run", "doc2atom-evaluate", "--predictions", str(PRED_EVAL_PATH)])
     else:

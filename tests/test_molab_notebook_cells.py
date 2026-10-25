@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
+import sys
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +34,41 @@ def _cell_with_parameter(parameter: str):
             exec(compile(executable, str(NOTEBOOK), "exec"), namespace)
             return namespace["cell_under_test"]
     raise AssertionError(f"no notebook cell with parameter {parameter}")
+
+
+def _cell_with_parameters(*parameters: str):
+    module = ast.parse(NOTEBOOK.read_text(encoding="utf-8"), filename=str(NOTEBOOK))
+    for node in module.body:
+        if isinstance(node, ast.FunctionDef) and set(parameters).issubset(
+            {argument.arg for argument in node.args.args}
+        ):
+            cell = ast.FunctionDef(
+                name="cell_under_test", args=node.args, body=node.body,
+                decorator_list=[], returns=node.returns, type_comment=node.type_comment,
+            )
+            namespace = {"__name__": "__main__"}
+            executable = ast.fix_missing_locations(ast.Module(body=[cell], type_ignores=[]))
+            exec(compile(executable, str(NOTEBOOK), "exec"), namespace)
+            return namespace["cell_under_test"]
+    raise AssertionError(f"no notebook cell with parameters {parameters}")
+
+
+def test_notebook_defaults_predictions_to_predictions_directory(tmp_path: Path) -> None:
+    values = _cell_with_parameters("REPO_DIR", "subprocess")(
+        Path=Path, REPO_DIR=tmp_path, os=os, shutil=shutil, subprocess=subprocess,
+    )
+
+    assert values[3] == tmp_path / "outputs" / "molab-single-gpu" / "predictions" / "validation.jsonl"
+
+
+def test_notebook_open_does_not_run_repo_update_or_dependency_install() -> None:
+    class NoSubprocess:
+        def run(self, *args, **kwargs):
+            raise AssertionError("opening notebook must not run shell commands")
+
+    _cell_with_parameters("Path", "shutil", "subprocess", "sys")(
+        Path=Path, os=os, shutil=shutil, subprocess=NoSubprocess(), sys=sys,
+    )
 
 
 def test_evaluation_generates_and_scores_from_best_checkpoint(tmp_path: Path) -> None:

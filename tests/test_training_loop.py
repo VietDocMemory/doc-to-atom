@@ -284,6 +284,107 @@ def test_intentional_mid_run_stop_keeps_last_but_defers_best_upload(tmp_path: Pa
     assert tracker.uploads == 0
 
 
+def test_terminal_policy_uploads_best_and_last_once_without_touching_resume_state(tmp_path: Path, monkeypatch):
+    class Tracker:
+        run_id = "test-run"
+        mode = "offline"
+
+        def __init__(self):
+            self.uploads = []
+
+        def log_metrics(self, values, *, step):
+            pass
+
+        def log_best_weights(self, path, *, optimizer_step):
+            self.uploads.append(("best", optimizer_step))
+            return {"status": "offline_pending", "checkpoint": Path(path).name, "optimizer_step": optimizer_step}
+
+        def log_last_checkpoint(self, path, *, optimizer_step):
+            self.uploads.append(("last", optimizer_step))
+            assert (Path(path) / "state.json").is_file()
+            return {"status": "offline_pending", "checkpoint": Path(path).name, "optimizer_step": optimizer_step}
+
+    tracker = Tracker()
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": 1.0}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["runtime"]["checkpoint_upload"] = "best_weights_and_last_full"
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 1, "gradient_accumulation_steps": 1,
+        "validation_every_steps": 1,
+    })
+    records = [_record("train"), _record("validation")]
+
+    run_training(_tiny_system(), ToyTokenizer(), records, config, tmp_path, tracker=tracker)
+    pointer = tmp_path / "checkpoints" / "last.json"
+    from doc_to_atom.training.checkpoint import load_training_checkpoint
+    state = load_training_checkpoint(
+        {}, tmp_path / "checkpoints" / json.loads(pointer.read_text())["path"],
+        restore_rng=False,
+    )
+    assert state.exact_resume and state.optimizer_step == 1
+    assert tracker.uploads == [("best", 1), ("last", 1)]
+    assert json.loads((tmp_path / "manifests" / "last_checkpoint_upload.json").read_text())["status"] == "offline_pending"
+
+    run_training(
+        _tiny_system(), ToyTokenizer(), records, config, tmp_path,
+        resume_from=pointer, tracker=tracker,
+    )
+    assert tracker.uploads == [("best", 1), ("last", 1)]
+
+
+def test_new_upload_policy_early_stop_preserves_resume_after_upload_error(tmp_path: Path, monkeypatch):
+    class Tracker:
+        run_id = "test-run"
+        mode = "online"
+
+        def __init__(self):
+            self.last_uploads = []
+
+        def log_metrics(self, values, *, step):
+            pass
+
+        def log_best_weights(self, path, *, optimizer_step):
+            raise ConnectionError("simulated upload failure")
+
+        def log_last_checkpoint(self, path, *, optimizer_step):
+            self.last_uploads.append(optimizer_step)
+            return {"status": "uploaded", "checkpoint": Path(path).name, "optimizer_step": optimizer_step}
+
+    values = iter((1.0, 2.0))
+    monkeypatch.setattr(
+        loop_module, "_validation_report",
+        lambda *args: {"overall": {"losses": {"lm": next(values)}}},
+    )
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["runtime"]["checkpoint_upload"] = "best_weights_and_last_full"
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 3, "gradient_accumulation_steps": 1,
+        "validation_every_steps": 1, "checkpoint_every_steps": 100,
+        "early_stopping_patience": 1,
+    })
+    tracker = Tracker()
+
+    result = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{i}") for i in range(3)] + [_record("validation")],
+        config, tmp_path, tracker=tracker,
+    )
+
+    checkpoint_dir = tmp_path / "checkpoints"
+    last_pointer = json.loads((checkpoint_dir / "last.json").read_text())
+    best_pointer = json.loads((checkpoint_dir / "best.json").read_text())
+    from doc_to_atom.training.checkpoint import load_training_checkpoint
+    state = load_training_checkpoint({}, checkpoint_dir / last_pointer["path"], restore_rng=False)
+    assert result["early_stopped"] and state.exact_resume and state.early_stopped
+    assert last_pointer["optimizer_step"] == 2 and best_pointer["optimizer_step"] == 1
+    assert tracker.last_uploads == [2]
+    assert not (tmp_path / "manifests" / "best_model_upload.json").exists()
+    assert json.loads((tmp_path / "manifests" / "last_checkpoint_upload.json").read_text())["status"] == "uploaded"
+
+
 def test_distributed_main_rank_retains_best_last_after_collective_save(
     tmp_path: Path, monkeypatch
 ):
