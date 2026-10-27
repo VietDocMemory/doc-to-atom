@@ -104,6 +104,8 @@ def test_query_engine_uses_short_answer_generation_without_changing_routing():
         stage1_indices=torch.tensor([0]),
         selected_indices=torch.tensor([0]),
         routing_weights=torch.tensor([1.0]),
+        no_memory_weight=torch.tensor(0.0),
+        candidate_final_scores=torch.tensor([1.0]),
     )
     encoder = SimpleNamespace(encode_queries=lambda **kwargs: torch.zeros(1, 2))
     class _Router:

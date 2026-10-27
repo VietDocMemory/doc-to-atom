@@ -85,7 +85,7 @@ def run_smoke(config: dict, output_dir: Path) -> dict:
     distractor = selected == 1
     group_ids = [atoms[index].conflict_group for index in selected.tolist()]
     confidences = torch.tensor([atoms[index].confidence for index in selected.tolist()])
-    gates = torch.stack(list(composed.gates.values()))
+    gates = torch.sigmoid(bank.mask_logits)
     random_main = torch.randn(2, 5, 13, requires_grad=True)
     random_forced = torch.randn(2, 5, 13, requires_grad=True)
     losses = {
@@ -94,7 +94,9 @@ def run_smoke(config: dict, output_dir: Path) -> dict:
         "route": routing_loss(routed.final_scores, gold, distractor),
         "rerank": listwise_rerank_loss(routed.final_scores, gold),
         "irrelevant": irrelevant_suppression_loss(composed),
-        "protect": protection_loss(composed),
+        "protect": protection_loss(
+            composed, config["compiler"]["lora_alpha"] / config["compiler"]["lora_rank"]
+        ),
         "sparse": sparse_regularization_loss(gates, config["training"]["sparse_target_density"]),
         "composition": composition_consistency_loss(random_main, random_forced),
         "conflict": conflict_listwise_loss(routed.final_scores, group_ids, gold),

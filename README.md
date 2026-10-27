@@ -42,6 +42,9 @@ Credentials are loaded from the ignored `.env`. MiniMax uses `MINIMAX_API_KEY`,
 `REPRODUCTION_DEVIATION` in annotation provenance.
 
 See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
+For the actual 2×16-GiB local / 1×96-GiB Molab setup, supported commands,
+runtime limitations and the benchmark report form are in
+`docs/LOCAL_MOLAB_RUNBOOK.md` and `docs/EVALUATION_SUMMARY_TEMPLATE.md`.
 
 W&B tracking is local-first. Set `runtime.wandb_mode: offline` (the default in the
 Molab reconstruction and local diagnostic profiles) to avoid authentication and

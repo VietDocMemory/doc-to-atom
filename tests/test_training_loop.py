@@ -17,6 +17,7 @@ import doc_to_atom.training.loop as loop_module
 from doc_to_atom.training.distributed import LocalTrainingRuntime
 from doc_to_atom.training.system import TeacherStudentSystem
 import doc_to_atom.training.trainer as trainer_module
+from doc_to_atom.losses.objectives import sparse_regularization_loss, protection_loss
 
 
 def test_validation_evaluates_generated_irrelevant_after_training_question_cap(monkeypatch):
@@ -139,6 +140,85 @@ def _tiny_system():
         MemoryComposer(),
         DynamicLoRAInjector(model, targets, rank=2, alpha=4),
     )
+
+
+def test_gold_forced_pass_conflict_final_scores_and_atom_sparse_expectation(monkeypatch):
+    system = _tiny_system()
+    record = _record("train")
+    record.atoms[0].conflict_group = "shared"
+    record.atoms.append(Atom(
+        atom_id="a1", semantic_type="fact_claim", content="Beta", source_span="Beta",
+        retrieval_text="Beta", is_answer_bearing=True, abstraction_level="evidence",
+        confidence=0.3, conflict_group="shared",
+    ))
+    record.qa_pairs[0].supporting_atom_ids = ["a1"]
+    with torch.no_grad():
+        system.router.metadata_weights[0] = 3.0
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    tokenizer = ToyTokenizer()
+    bank = loop_module._memory(system, tokenizer, record, config)
+    observed = {}
+    original_route = loop_module.routing_loss
+    original_conflict = loop_module.conflict_listwise_loss
+    original_sparse = loop_module.sparse_regularization_loss
+    original_forced = system.forced_gold_forward
+
+    def capture_route(scores, gold, distractor):
+        observed["cosine_scores"] = scores.detach().clone()
+        observed["route_gold"] = gold.detach().clone()
+        return original_route(scores, gold, distractor)
+
+    def capture_conflict(scores, groups, gold):
+        observed["conflict_scores"] = scores.detach().clone()
+        observed["conflict_gold"] = gold.detach().clone()
+        return original_conflict(scores, groups, gold)
+
+    def capture_sparse(gates, rho, mask):
+        observed["atom_gates"] = gates.detach().clone()
+        observed["valid_atoms"] = mask.detach().clone()
+        return original_sparse(gates, rho, mask)
+
+    def capture_forced(**kwargs):
+        observed["forced_indices"] = kwargs["selected_indices"].detach().clone()
+        return original_forced(**kwargs)
+
+    monkeypatch.setattr(loop_module, "routing_loss", capture_route)
+    monkeypatch.setattr(loop_module, "conflict_listwise_loss", capture_conflict)
+    monkeypatch.setattr(loop_module, "sparse_regularization_loss", capture_sparse)
+    monkeypatch.setattr(system, "forced_gold_forward", capture_forced)
+    bundle, _, trace = loop_module._one_question(
+        system, tokenizer, record, record.qa_pairs[0], bank, config, 6000
+    )
+    assert observed["route_gold"].tolist() == [True, False]
+    assert observed["conflict_gold"].sum() == 1
+    assert observed["forced_indices"].tolist() == [0]
+    assert not torch.allclose(observed["conflict_scores"].sort().values,
+                              observed["cosine_scores"].sort().values)
+    assert torch.allclose(observed["atom_gates"], bank.mask_logits.sigmoid())
+    assert observed["valid_atoms"].tolist() == [True, True]
+    assert trace["supporting_atom_count"] == trace["gold_atom_count"] == 1
+    assert torch.isfinite(bundle.total)
+
+
+def test_sparse_expectation_excludes_padding_and_protection_includes_lora_scale():
+    gates = torch.tensor([[0.2, 0.4], [0.8, 0.6], [0.0, 0.0]])
+    assert sparse_regularization_loss(gates, 0.5, torch.tensor([1, 1, 0], dtype=torch.bool)) == pytest.approx(0)
+    from doc_to_atom.composer.model import ComposedMemory
+    composed = ComposedMemory({"k": torch.ones(1, 2)}, {"k": torch.ones(2, 1)},
+                              {"k": torch.tensor(0.5)}, None)
+    assert protection_loss(composed, 2.0) == pytest.approx(4 * protection_loss(composed, 1.0))
+
+
+def test_training_explicitly_ignores_atom_only_record(tmp_path):
+    atom_only = _record("train", "-atom-only")
+    atom_only.qa_pairs = []
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({"max_epochs": 1, "max_steps": 1,
+                               "gradient_accumulation_steps": 1, "warmup_steps": 0})
+    result = run_training(
+        _tiny_system(), ToyTokenizer(), [atom_only, _record("train")], config, tmp_path
+    )
+    assert result["optimizer_steps"] == result["micro_steps"] == 1
 
 
 def test_checkpoint_retention_does_not_save_each_nonimproving_validation(

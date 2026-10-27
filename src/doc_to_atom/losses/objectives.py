@@ -60,16 +60,28 @@ def irrelevant_suppression_loss(memory: ComposedMemory) -> torch.Tensor:
     return torch.stack(values).sum() if values else torch.tensor(0.0)
 
 
-def protection_loss(memory: ComposedMemory) -> torch.Tensor:
+def protection_loss(memory: ComposedMemory, lora_scale: float = 1.0) -> torch.Tensor:
+    """Penalize the actual injected delta: (alpha/r * gate * B @ A)^2."""
     values = []
     for key in memory.factors_a:
         delta = memory.factors_b[key] @ memory.factors_a[key]
-        values.append((memory.gates[key] * delta).pow(2).sum())
+        values.append((lora_scale * memory.gates[key] * delta).pow(2).sum())
     return torch.stack(values).sum() if values else torch.tensor(0.0)
 
 
-def sparse_regularization_loss(gates: torch.Tensor, rho: float) -> torch.Tensor:
-    return (gates.mean(dim=0) - rho).pow(2).sum() if gates.ndim > 1 else (gates - rho).pow(2).sum()
+def sparse_regularization_loss(
+    gates: torch.Tensor, rho: float, valid_atoms: torch.Tensor | None = None
+) -> torch.Tensor:
+    """Eq. 7: mean per-atom gate for each layer/module, excluding padding."""
+    if gates.ndim != 2:
+        raise ValueError("expected [atoms, layer_modules] gate values")
+    if valid_atoms is None:
+        valid_atoms = torch.ones(gates.shape[0], dtype=torch.bool, device=gates.device)
+    if valid_atoms.shape != (gates.shape[0],):
+        raise ValueError("valid_atoms must be a vector matching the atom dimension")
+    if not valid_atoms.any():
+        return gates.sum() * 0
+    return (gates[valid_atoms].mean(dim=0) - rho).pow(2).sum()
 
 
 def _kl(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:

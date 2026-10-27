@@ -6,6 +6,9 @@ from doc_to_atom.atomization.models import (
 )
 from doc_to_atom.atomization.parser import parse_atoms_xml, parse_questions_xml
 from doc_to_atom.atomization.validation import validate_record
+from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
+from doc_to_atom.atomization.question_join import join_question_roles
+from doc_to_atom.atomization.models import QuestionRoleAnnotation
 
 
 def test_atom_xml_parser_recovers_partial_response():
@@ -122,3 +125,43 @@ def test_irrelevant_clears_gold():
     )
     assert record.qa_pairs[0].gold_atom_ids == []
     assert record.qa_pairs[0].question_type == "irrelevant"
+
+
+def test_generated_probe_can_be_rescued_as_in_appendix_f():
+    probe = QuestionAnnotation(
+        question_id="generated_irrelevant_0", question="What is Ascension Island's code?",
+        question_type="irrelevant", is_irrelevant=True, is_generated_irrelevant=True,
+        answers=(), answer_provenance="generated_irrelevant",
+    )
+    role = QuestionRoleAnnotation(
+        question_id=probe.question_id, question_type="field_lookup", gold_atom_ids=("a0",)
+    )
+    [rescued] = join_question_roles((probe,), (role,))
+    assert rescued.is_generated_irrelevant and not rescued.is_irrelevant
+    assert rescued.question_type == "field_lookup" and rescued.gold_atom_ids == ["a0"]
+    assert rescued.answers == ()  # Do not invent an answer absent from the source.
+
+
+def test_question_annotation_failure_retains_validated_atom_only_record():
+    class FakeAtomizer(ThreeStageXMLAtomizer):
+        def __init__(self):
+            super().__init__(OpenAIConfig(api_key="test"), "openai")
+
+        def _request(self, system, user):
+            if "Decompose" in system:
+                return ("<atoms><atom id='a0'><semantic_type>fact_claim</semantic_type>"
+                        "<content>A</content><source_span>A</source_span>"
+                        "<retrieval_text>A</retrieval_text><is_answer_bearing>true</is_answer_bearing>"
+                        "<abstraction_level>evidence</abstraction_level><confidence>1</confidence>"
+                        "</atom></atoms>")
+            if "Generate plausible" in system:
+                return "<irrelevant_questions/>"
+            raise RuntimeError("annotation unavailable")
+
+    result = FakeAtomizer().atomize("r", "A", [QuestionAnnotation(
+        question_id="q", question="A?", answers=("A",), question_type="single_hop"
+    )])
+    assert result is not None and len(result.atoms) == 1 and result.atoms[0].span_valid
+    assert result.qa_pairs == []
+    assert result.annotation_meta.question_parse_status == "failed"
+    assert result.annotation_meta.errors

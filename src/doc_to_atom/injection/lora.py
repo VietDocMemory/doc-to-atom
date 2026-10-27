@@ -60,6 +60,7 @@ class DynamicLoRAInjector:
     ) -> None:
         self.model = model
         self.targets = targets
+        # The effective delta and its protection loss both use alpha/rank.
         self.scale = alpha / rank
         self._active: ContextVar[ComposedMemory | None] = ContextVar(
             "doc2atom_composed_memory", default=None

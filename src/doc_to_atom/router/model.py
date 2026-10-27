@@ -30,8 +30,11 @@ class RouterOutput:
     stage1_scores: torch.Tensor
     reranker_scores: torch.Tensor
     metadata_biases: torch.Tensor
+    candidate_final_scores: torch.Tensor
     final_scores: torch.Tensor
     routing_weights: torch.Tensor
+    no_memory_weight: torch.Tensor
+    no_memory_score: torch.Tensor
 
 
 class TwoStageRouter(nn.Module):
@@ -55,6 +58,11 @@ class TwoStageRouter(nn.Module):
         self.reranker = reranker
         self.metadata_weights = nn.Parameter(torch.zeros(4, dtype=torch.float32))
         self.semantic_type_scalar = nn.Embedding(len(SEMANTIC_TYPES), 1, dtype=torch.float32)
+        # A learned null candidate competes with the atoms. Its initial logit is
+        # zero; the paper does not specify an abstention threshold.
+        self.no_memory_head = nn.Linear(embedding_dim, 1, dtype=torch.float32)
+        nn.init.zeros_(self.no_memory_head.weight)
+        nn.init.zeros_(self.no_memory_head.bias)
 
     def _metadata_features(self, atoms: list[Atom], device: torch.device) -> torch.Tensor:
         type_ids = torch.tensor(
@@ -110,7 +118,12 @@ class TwoStageRouter(nn.Module):
         top_k = min(final_top_k, k1)
         final_scores, local_indices = torch.topk(candidate_final, k=top_k)
         selected_indices = stage1_indices[local_indices]
-        routing_weights = F.softmax(final_scores / self.temperature, dim=0)
+        no_memory_score = self.no_memory_head(query_embedding.float()).reshape(())
+        probabilities = F.softmax(
+            torch.cat((final_scores, no_memory_score.unsqueeze(0))) / self.temperature,
+            dim=0,
+        )
+        routing_weights = probabilities[:-1]
         return RouterOutput(
             all_stage1_scores=similarities,
             stage1_indices=stage1_indices,
@@ -118,6 +131,9 @@ class TwoStageRouter(nn.Module):
             stage1_scores=stage1_scores,
             reranker_scores=reranker_scores,
             metadata_biases=metadata_biases,
+            candidate_final_scores=candidate_final,
             final_scores=final_scores,
             routing_weights=routing_weights,
+            no_memory_weight=probabilities[-1],
+            no_memory_score=no_memory_score,
         )

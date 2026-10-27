@@ -82,7 +82,7 @@ class MultiObjectiveTrainer:
         self.config = config
 
     def combine(self, step: int, values: dict[str, torch.Tensor]) -> LossBundle:
-        stage = stage_for_step(step)
+        stage = stage_for_step(step, self.config["training"].get("curriculum_boundaries"))
         configured = self.config["training"]["loss_weights"]
         total = next(iter(values.values())).sum() * 0
         for name in stage.active_losses:
@@ -123,6 +123,7 @@ def all_objectives(
     routing_weights: torch.Tensor,
     selected_confidences: torch.Tensor,
     distillation_temperature: float = 1.5,
+    lora_scale: float = 1.0,
 ) -> dict[str, torch.Tensor]:
     return {
         "lm": language_modeling_loss(student_logits, labels),
@@ -132,7 +133,7 @@ def all_objectives(
         "route": routing_loss(route_scores, gold_mask, distractor_mask),
         "rerank": listwise_rerank_loss(reranker_scores, gold_mask),
         "irrelevant": irrelevant_suppression_loss(composed),
-        "protect": protection_loss(composed),
+        "protect": protection_loss(composed, lora_scale),
         "sparse": sparse_regularization_loss(gates, rho),
         "composition": composition_consistency_loss(student_logits, forced_logits),
         "conflict": conflict_listwise_loss(route_scores, group_ids, gold_mask),

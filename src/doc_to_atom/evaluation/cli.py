@@ -177,6 +177,8 @@ def score_rows(rows: list[dict], *, refusal_literal: str = "unanswerable") -> di
         "mrr": mean(ranks),
         "latency_ms": mean(latencies),
         "adapter_norm": mean(adapter_norms),
+        "no_memory_weight_answerable": mean([float(row["no_memory_weight"]) for row in answerable if row.get("no_memory_weight") is not None]),
+        "no_memory_weight_irrelevant": mean([float(row["no_memory_weight"]) for row in irrelevant if row.get("no_memory_weight") is not None]),
     }
 
 
@@ -220,6 +222,7 @@ def generate_rows(
                 "selected_atom_ids": result["selected_atom_ids"],
                 "ranked_atom_ids": ranked,
                 "routing_weights": result["routing_weights"],
+                "no_memory_weight": result.get("no_memory_weight"),
                 "recall_at_k": route["recall_at_8"],
                 **route,
                 "latency_ms": (time.perf_counter() - started) * 1000,

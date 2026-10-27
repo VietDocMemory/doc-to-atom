@@ -55,15 +55,21 @@ def join_question_roles(
             raise QuestionJoinError(
                 f"provider relevance conflicts with authoritative question_id: {source.question_id}"
             )
+        # Generation is provenance, not a guaranteed relevance label. Only a
+        # generated probe may be rescued by the annotation pass.
+        rescued = source.is_generated_irrelevant and role.question_type not in (None, "irrelevant")
+        if rescued and not role.gold_atom_ids:
+            raise QuestionJoinError(f"rescued probe has no gold atoms: {source.question_id}")
         question_type = (
             "irrelevant"
-            if source.is_irrelevant
+            if source.is_irrelevant and not rescued
             else (role.question_type or source.question_type)
         )
         joined.append(
             source.model_copy(
                 update={
                     "question_type": question_type,
+                    "is_irrelevant": source.is_irrelevant and not rescued,
                     "gold_atom_ids": list(role.gold_atom_ids),
                     "supporting_atom_ids": list(role.supporting_atom_ids),
                     "distractor_atom_ids": list(role.distractor_atom_ids),

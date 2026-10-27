@@ -209,6 +209,10 @@ def load_and_resolve_config(
 
 def require_disclosed_training_values(config: dict[str, Any]) -> None:
     training = config["training"]
+    if "curriculum_boundaries" in training:
+        from doc_to_atom.training.curriculum import stage_for_step
+
+        stage_for_step(0, training["curriculum_boundaries"])
     missing = [name for name, value in training["loss_weights"].items() if value is None]
     if training.get("sparse_target_density") is None:
         missing.append("sparse_target_density/rho")

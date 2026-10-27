@@ -110,6 +110,8 @@ def _aggregate_traces(traces: list[dict]) -> dict:
         "mrr",
         "routing_entropy",
         "adapter_norm",
+        "no_memory_weight",
+        "routing_weight_sum",
         "token_accuracy",
     )
     return {
@@ -161,7 +163,7 @@ def _memory(system, tokenizer, record: StructuredRecord, config: dict) -> Memory
 
 def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     device = _model_device(system)
-    stage = stage_for_step(step)
+    stage = stage_for_step(step, config["training"].get("curriculum_boundaries"))
     target_value = resolve_target(qa)
     answer = target_value.text
     if not answer:
@@ -206,21 +208,31 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     )
 
     all_ids = [atom.atom_id for atom in record.atoms]
-    relevant = set(qa.gold_atom_ids + qa.supporting_atom_ids)  # Assumption documented.
-    gold_mask = torch.tensor([atom_id in relevant for atom_id in all_ids], device=device)
+    gold = set(qa.gold_atom_ids)
+    gold_mask = torch.tensor([atom_id in gold for atom_id in all_ids], device=device)
+    supporting_mask = torch.tensor(
+        [atom_id in qa.supporting_atom_ids for atom_id in all_ids], device=device
+    )
     distractor_mask = torch.tensor(
         [atom_id in qa.distractor_atom_ids for atom_id in all_ids], device=device
     )
     route = routing_loss(student.router.all_stage1_scores, gold_mask, distractor_mask)
+    # A supervised null candidate permits a zero-memory decision. Reuse the
+    # route coefficient rather than inventing an unreported auxiliary weight.
+    correct_decision = (
+        student.router.no_memory_weight
+        if qa.is_irrelevant else student.router.routing_weights.sum()
+    )
+    route = route - torch.log(correct_decision.clamp_min(1e-8))
 
     candidate_gold = gold_mask[student.router.stage1_indices]
     rerank = listwise_rerank_loss(
         student.router.reranker_scores + student.router.metadata_biases, candidate_gold
     )
 
-    if relevant:
+    if gold:
         forced_indices = torch.tensor(
-            [index for index, atom_id in enumerate(all_ids) if atom_id in relevant], device=device
+            [index for index, atom_id in enumerate(all_ids) if atom_id in gold], device=device
         )
         forced_weights = F.softmax(student.router.all_stage1_scores[forced_indices], dim=0)
         forced_logits = system(
@@ -238,7 +250,10 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
 
     selected_atoms = [record.atoms[index] for index in student.router.selected_indices.tolist()]
     selected_confidences = torch.tensor([atom.confidence for atom in selected_atoms], device=device)
-    gate_tensor = torch.stack(list(student.composed.gates.values()))
+    # The compiler emits per-atom gate logits; the composer emits per-query
+    # aggregated gates, which must not be used for the batch expectation.
+    atom_gates = torch.sigmoid(bank.mask_logits)
+    valid_atoms = torch.tensor([atom.span_valid for atom in record.atoms], device=device)
     losses = {
         "lm": lm,
         "distill": distill,
@@ -247,26 +262,24 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         "irrelevant": irrelevant_suppression_loss(student.composed)
         if qa.is_irrelevant
         else student_answer.sum() * 0,
-        "protect": protection_loss(student.composed),
+        "protect": protection_loss(
+            student.composed, config["compiler"]["lora_alpha"] / config["compiler"]["lora_rank"]
+        ),
         "sparse": sparse_regularization_loss(
-            gate_tensor, config["training"]["sparse_target_density"]
+            atom_gates, config["training"]["sparse_target_density"], valid_atoms
         ),
         "composition": composition,
         "conflict": conflict_listwise_loss(
-            student.router.all_stage1_scores,
-            [atom.conflict_group for atom in record.atoms],
-            gold_mask,
+            student.router.candidate_final_scores,
+            [record.atoms[index].conflict_group for index in student.router.stage1_indices.tolist()],
+            gold_mask[student.router.stage1_indices],
         ),
         "confidence": confidence_alignment_loss(
             student.router.routing_weights, selected_confidences
         ),
     }
     bundle = MultiObjectiveTrainer(config).combine(step, losses)
-    candidate_scores = (
-        student.router.stage1_scores
-        + config["router"]["rerank_fusion_weight"] * student.router.reranker_scores
-        + student.router.metadata_biases
-    )
+    candidate_scores = student.router.candidate_final_scores
     ranked_indices = student.router.stage1_indices[torch.argsort(candidate_scores, descending=True)]
     gold_indices = torch.where(gold_mask)[0]
     diagnostic_k = min(config.get("evaluation", {}).get("routing_recall_k", 4), len(all_ids))
@@ -298,7 +311,11 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         "target": answer,
         "target_provenance": target_value.provenance,
         "stage1_candidate_count": int(student.router.stage1_indices.numel()),
+        "gold_atom_count": int(gold_mask.sum()),
+        "supporting_atom_count": int(supporting_mask.sum()),
+        "no_memory_weight": float(student.router.no_memory_weight.detach()),
         "final_top_k": int(student.router.selected_indices.numel()),
+        "curriculum_stage": stage.name,
     }
     return bundle, float(lm.detach()), trace
 
@@ -350,8 +367,17 @@ def run_training(
     started = time.perf_counter()
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
-    train_records = [record for record in records if record.split not in {"validation", "test"}]
-    validation_records = [record for record in records if record.split == "validation"]
+    # Atom-only records are retained for audit, not silently treated as
+    # training/validation samples with zero loss.
+    # A rescued generated probe has no source answer: retain it for audit but
+    # do not manufacture an LM target for it.
+    usable = [record for record in records if any(q.is_irrelevant or q.answers for q in record.qa_pairs)]
+    train_records = [record for record in usable if record.split not in {"validation", "test"}]
+    validation_records = [record for record in usable if record.split == "validation"]
+    LOGGER.info(
+        "skipping %d records without trainable question annotations (%d atom-only)",
+        len(records) - len(usable), sum(not record.qa_pairs for record in records),
+    )
     if not train_records:
         raise ValueError("no training records after split filtering")
     training_config = config["training"]
@@ -572,6 +598,8 @@ def run_training(
                 record_totals = []
                 record_traces = []
                 for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
+                    if not qa.is_irrelevant and not qa.answers:
+                        continue
                     curriculum_step = offset + optimizer_step
                     bundle, _lm_value, trace = _one_question(
                         system, tokenizer, record, qa, bank, config, curriculum_step
@@ -663,6 +691,13 @@ def run_training(
                             "train/total_loss": event["train"]["overall"].get("total_loss"),
                             "train/gradient_norm": event["gradient_norm"],
                             "train/learning_rate": event["learning_rate"],
+                            **{
+                                f"train/loss_{name}": value
+                                for name, value in event["train"]["overall"].get("losses", {}).items()
+                                if value is not None
+                            },
+                            "train/no_memory_weight_answerable": event["train"]["answerable"].get("no_memory_weight"),
+                            "train/no_memory_weight_irrelevant": event["train"]["generated_irrelevant"].get("no_memory_weight"),
                         },
                         step=optimizer_step,
                     )
@@ -786,6 +821,8 @@ def _validation_report(system, tokenizer, records, config, step):
     for record in records:
         bank = _memory(system, tokenizer, record, config)
         for qa in record.qa_pairs:
+            if not qa.is_irrelevant and not qa.answers:
+                continue
             _bundle, _lm, trace = _one_question(
                 system, tokenizer, record, qa, bank, config, step
             )

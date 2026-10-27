@@ -1,0 +1,15 @@
+# Actual Molab topology: one 96-GiB GPU. Not the paper's 8x A100 run.
+_base_: molab_single_gpu.yaml
+profile:
+  name: gemma-reconstruction-molab-blackwell-1gpu
+  family: reconstruction
+runtime:
+  profile: molab_blackwell_1gpu
+  distributed_backend: none
+  gradient_checkpointing: false
+training:
+  # The current loop processes one document per micro-step, regardless of a
+  # declared micro_batch_size. 16 accumulation steps give global batch 16.
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  effective_global_batch: 16

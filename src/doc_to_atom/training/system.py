@@ -83,6 +83,8 @@ class TeacherStudentSystem(nn.Module):
         query_embedding = self.encoder.encode_queries(**query_embedding_inputs)
         routed = self.router(query_embedding, bank.keys, bank.atoms or [], query_text, top_k)
         composed = self.composer(bank, routed.selected_indices, routed.routing_weights)
+        # The null candidate reduces the atom weights continuously, allowing
+        # irrelevant-query gradients to suppress the actual injected delta.
         with self.injector.activate(composed):
             logits = self.base_model(**query_inputs, use_cache=False).logits
         return StudentOutput(logits=logits, router=routed, composed=composed)

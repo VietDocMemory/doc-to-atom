@@ -38,10 +38,25 @@ STAGES = (
 )
 
 
-def stage_for_step(step: int) -> CurriculumStage:
+def stage_for_step(
+    step: int, boundaries: tuple[int, int, int] | list[int] | None = None
+) -> CurriculumStage:
     if step < 0:
         raise ValueError("step must be non-negative")
-    for stage in STAGES:
+    if boundaries is None:
+        stages = STAGES
+    else:
+        if (len(boundaries) != 3 or any(type(value) is not int for value in boundaries)
+                or not 0 < boundaries[0] < boundaries[1] < boundaries[2]):
+            raise ValueError("curriculum_boundaries must be three strictly increasing positive steps")
+        starts = (0, *boundaries)
+        ends = (*boundaries, None)
+        stages = tuple(
+            CurriculumStage(stage.name, start, end, stage.top_k, stage.active_losses,
+                            stage.increase_irrelevant, stage.strengthen_sparse)
+            for stage, start, end in zip(STAGES, starts, ends, strict=True)
+        )
+    for stage in stages:
         if step >= stage.start_step and (stage.end_step is None or step < stage.end_step):
             return stage
     raise AssertionError("unreachable")

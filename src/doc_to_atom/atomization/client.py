@@ -230,11 +230,26 @@ class ThreeStageXMLAtomizer:
             if any(notice.severity == "error" for notice in notices):
                 raise QuestionJoinError("provider question annotation failed contract parsing")
             annotated = join_question_roles(authoritative, roles)
+            for qa in annotated:
+                if qa.is_generated_irrelevant and not qa.is_irrelevant and not qa.answers:
+                    meta.warnings.append(
+                        f"{qa.question_id}: rescued probe has no source answer; excluded from LM training"
+                    )
         except Exception as exc:  # noqa: BLE001 -- reject incomplete/corrupt QA records.
             meta.question_parse_status = "failed"
             meta.errors.append(f"question annotation failed: {exc}")
             self.last_errors = list(meta.errors)
-            return None
+            # Appendix B.4: keep the validated atom bank, without unreliable
+            # question annotations. This record is not a training example.
+            return validate_record(StructuredRecord(
+                record_id=record_id,
+                dataset=dataset,
+                split=split,
+                context=context,
+                atoms=atoms,
+                qa_pairs=[],
+                annotation_meta=meta,
+            ))
 
         record = StructuredRecord(
             record_id=record_id,

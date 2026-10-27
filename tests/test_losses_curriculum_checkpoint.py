@@ -45,7 +45,7 @@ def test_every_loss_is_finite():
         listwise_rerank_loss(scores, gold),
         irrelevant_suppression_loss(composed),
         protection_loss(composed),
-        sparse_regularization_loss(torch.tensor([0.2, 0.5]), 0.25),
+        sparse_regularization_loss(torch.tensor([[0.2, 0.5]]), 0.25),
         composition_consistency_loss(logits, teacher),
         conflict_listwise_loss(scores, ["g", "g", None], gold),
         confidence_alignment_loss(torch.tensor([0.4, 0.6]), torch.tensor([0.8, 0.5])),

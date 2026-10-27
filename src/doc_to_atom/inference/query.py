@@ -38,11 +38,7 @@ class QueryEngine:
         query_embedding = self.encoder.encode_queries(**query_encoded)
         routed = self.router(query_embedding, bank.keys, bank.atoms or [], query, top_k)
         composed = self.composer(bank, routed.selected_indices, routed.routing_weights)
-        candidate_scores = (
-            routed.stage1_scores
-            + self.router.rerank_fusion_weight * routed.reranker_scores
-            + routed.metadata_biases
-        )
+        candidate_scores = routed.candidate_final_scores
         ranked_indices = routed.stage1_indices[torch.argsort(candidate_scores, descending=True)]
         with self.injector.activate(composed):
             generation = generate_short_answer(
@@ -58,5 +54,6 @@ class QueryEngine:
             "reranker_scores": routed.reranker_scores.tolist(),
             "metadata_biases": routed.metadata_biases.tolist(),
             "routing_weights": routed.routing_weights.tolist(),
+            "no_memory_weight": float(routed.no_memory_weight),
             "composed_adapter_norm": float(composed.adapter_norm()),
         }

@@ -34,13 +34,28 @@ def bank(n=6):
     )
 
 
-def test_router_topk_and_weights_sum_one():
+def test_router_topk_and_weights_include_null_candidate():
     memory = bank()
     router = TwoStageRouter(embedding_dim=4, key_dim=4, stage1_top_k=4)
     output = router(torch.randn(1, 4), memory.keys, memory.atoms, "q", final_top_k=3)
     assert output.stage1_indices.numel() == 4
     assert output.selected_indices.numel() == 3
-    assert torch.allclose(output.routing_weights.sum(), torch.tensor(1.0))
+    assert torch.allclose(output.routing_weights.sum() + output.no_memory_weight, torch.tensor(1.0))
+
+
+def test_irrelevant_query_can_abstain_without_damaging_answerable_route():
+    memory = bank(2)
+    router = TwoStageRouter(embedding_dim=4, key_dim=4, stage1_top_k=2)
+    with torch.no_grad():
+        router.no_memory_head.weight.copy_(torch.tensor([[20.0, 0, 0, 0]]))
+        router.no_memory_head.bias.zero_()
+    off = router(torch.tensor([[1.0, 0, 0, 0]]), memory.keys, memory.atoms, "off", 1)
+    on = router(torch.tensor([[-1.0, 0, 0, 0]]), memory.keys, memory.atoms, "on", 1)
+    off_memory = MemoryComposer()(memory, off.selected_indices, off.routing_weights)
+    on_memory = MemoryComposer()(memory, on.selected_indices, on.routing_weights)
+    assert off.no_memory_weight > 0.999
+    assert off_memory.adapter_norm() < on_memory.adapter_norm() * 1e-5
+    assert on.routing_weights.sum() > 0.999
 
 
 def test_composer_equation_and_gate():

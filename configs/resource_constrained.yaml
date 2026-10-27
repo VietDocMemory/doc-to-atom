@@ -6,7 +6,7 @@ runtime:
   single_gpu: true
   device: auto
   reranker_device: cpu
-  gradient_checkpointing: true
+  gradient_checkpointing: false  # Dynamic LoRA hooks do not survive backward recomputation.
   flash_attention_2: auto
   log_reproduction_deviations: true
 training:
