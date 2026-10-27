@@ -45,6 +45,8 @@ See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
 For the actual 2×16-GiB local / 1×96-GiB Molab setup, supported commands,
 runtime limitations and the benchmark report form are in
 `docs/LOCAL_MOLAB_RUNBOOK.md` and `docs/EVALUATION_SUMMARY_TEMPLATE.md`.
+The 500-record local continuous shortened-curriculum experiment and its
+measured-results reporting commands are documented in `docs/MEDIUM_LOCAL_RUNBOOK.md`.
 
 W&B tracking is local-first. Set `runtime.wandb_mode: offline` (the default in the
 Molab reconstruction and local diagnostic profiles) to avoid authentication and

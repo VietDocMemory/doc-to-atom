@@ -362,6 +362,7 @@ def run_training(
     tracker=None,
     stop_after_optimizer_steps: int | None = None,
     runtime=None,
+    progress_callback=None,
 ):
     """Train at document granularity; all schedules advance on optimizer updates."""
     started = time.perf_counter()
@@ -655,12 +656,17 @@ def run_training(
                 last_validation_report = _validation_report(
                     system, tokenizer, validation_records, config, offset + optimizer_step
                 )
-                value = _metric_value(last_validation_report, early_stopping_metric)
-                observation = early_stopping.observe(value)
-                improved = observation.improved
-                stopped = observation.should_stop
-                if observation.nonfinite:
-                    LOGGER.warning("non-finite early-stopping metric at optimizer step %s", optimizer_step)
+                current_stage = stage_for_step(
+                    offset + optimizer_step - 1,
+                    training_config.get("curriculum_boundaries"),
+                )
+                if not training_config.get("stage4_only_best") or current_stage.name == "full_composition":
+                    value = _metric_value(last_validation_report, early_stopping_metric)
+                    observation = early_stopping.observe(value)
+                    improved = observation.improved
+                    stopped = observation.should_stop
+                    if observation.nonfinite:
+                        LOGGER.warning("non-finite early-stopping metric at optimizer step %s", optimizer_step)
                 system.train()
                 raw_system.base_model.eval()
 
@@ -670,6 +676,14 @@ def run_training(
                 "optimizer_step": optimizer_step,
                 "step": optimizer_step,
                 "curriculum_step": offset + optimizer_step,
+                "curriculum_stage": stage_for_step(
+                    offset + optimizer_step - 1,
+                    training_config.get("curriculum_boundaries"),
+                ).name,
+                "top_k": stage_for_step(
+                    offset + optimizer_step - 1,
+                    training_config.get("curriculum_boundaries"),
+                ).top_k,
                 "learning_rate": float(scheduler.get_last_lr()[0]),
                 "gradient_norm": float(gradient_norm),
                 "elapsed_seconds": time.perf_counter() - started,
@@ -685,6 +699,8 @@ def run_training(
             if runtime.is_main_process:
                 with log_path.open("a", encoding="utf-8", newline="\n") as handle:
                     handle.write(json.dumps(event) + "\n")
+                if progress_callback is not None:
+                    progress_callback(event)
                 if tracker is not None:
                     tracker.log_metrics(
                         {

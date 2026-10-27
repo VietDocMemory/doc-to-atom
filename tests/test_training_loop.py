@@ -221,6 +221,35 @@ def test_training_explicitly_ignores_atom_only_record(tmp_path):
     assert result["optimizer_steps"] == result["micro_steps"] == 1
 
 
+def test_shortened_curriculum_keeps_one_optimizer_and_best_only_from_stage4(
+    tmp_path, monkeypatch
+):
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"].update({
+        "max_epochs": 1, "max_steps": 4, "gradient_accumulation_steps": 1,
+        "warmup_steps": 0, "curriculum_boundaries": [1, 2, 3],
+        "stage4_only_best": True, "validation_every_steps": 1,
+        "checkpoint_every_steps": 1,
+    })
+    monkeypatch.setattr(loop_module, "_validation_report", lambda *args: {
+        "overall": {"losses": {"lm": 1.0}}
+    })
+    progress = []
+    result = run_training(
+        _tiny_system(), ToyTokenizer(),
+        [_record("train", f"-{i}") for i in range(4)] + [_record("validation")],
+        config, tmp_path, progress_callback=progress.append,
+    )
+    events = [json.loads(line) for line in (tmp_path / "train_log.jsonl").read_text().splitlines()]
+    assert result["optimizer_steps"] == 4
+    assert [event["curriculum_stage"] for event in events] == [
+        "single_atom", "multi_atom", "robustness", "full_composition"
+    ]
+    assert [event["top_k"] for event in events] == [1, 4, 8, 8]
+    assert [event["optimizer_step"] for event in progress] == [1, 2, 3, 4]
+    assert json.loads((tmp_path / "checkpoints/best.json").read_text())["optimizer_step"] == 4
+
+
 def test_checkpoint_retention_does_not_save_each_nonimproving_validation(
     tmp_path: Path, monkeypatch
 ):

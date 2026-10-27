@@ -58,38 +58,54 @@ def main() -> None:
         default=os.getenv("ANNOTATION_PROVIDER", "minimax"),
     )
     args = parser.parse_args()
+    print(json.dumps(atomize_file(
+        args.input, args.output, provider=args.provider, resume=args.resume,
+        retry_invalid=args.retry_invalid, raw_responses=args.raw_responses,
+    ), indent=2))
+
+
+def atomize_file(
+    input_path: str | Path, output_path: str | Path, *, provider: str = "openai",
+    resume: bool = True, retry_invalid: bool = False,
+    raw_responses: str | Path | None = None,
+) -> dict:
+    """Atomize source JSONL in-process; resume appends only uncached record IDs."""
+    if provider not in {"openai", "minimax"}:
+        raise ValueError(f"unsupported annotation provider: {provider}")
     atomizer = (
         OpenAIAtomizer(OpenAIConfig.from_env())
-        if args.provider == "openai"
+        if provider == "openai"
         else MiniMaxAtomizer(MiniMaxConfig.from_env())
     )
-    output = Path(args.output)
+    output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    raw_responses = Path(args.raw_responses or f"{output}.raw-responses.jsonl")
-    if not args.resume:
-        raw_responses.parent.mkdir(parents=True, exist_ok=True)
-        raw_responses.open("w", encoding="utf-8").close()
-    atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_responses)
+    raw_path = Path(raw_responses or f"{output}.raw-responses.jsonl")
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    if not resume:
+        if output.exists() or raw_path.exists():
+            raise FileExistsError("refusing to overwrite existing atomization output or raw responses")
+        raw_path.touch()
+    atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_path)
     cached_ids: set[str] = set()
     retained_lines: list[str] = []
-    if args.resume and output.exists():
+    if resume and output.exists():
         with output.open(encoding="utf-8") as cached:
             for line in cached:
                 if not line.strip():
                     continue
                 record = StructuredRecord.model_validate_json(line)
-                if args.retry_invalid and any(not atom.span_valid for atom in record.atoms):
+                if retry_invalid and any(not atom.span_valid for atom in record.atoms):
                     continue
                 cached_ids.add(record.record_id)
                 retained_lines.append(line.rstrip("\n"))
-        if args.retry_invalid:
+        if retry_invalid:
             with output.open("w", encoding="utf-8", newline="\n") as rewritten:
                 for line in retained_lines:
                     rewritten.write(line + "\n")
     failed = 0
-    mode = "a" if args.resume else "w"
+    mode = "a" if resume else "x"
     with (
-        Path(args.input).open(encoding="utf-8") as source,
+        Path(input_path).open(encoding="utf-8") as source,
         output.open(mode, encoding="utf-8") as sink,
     ):
         for index, line in enumerate(source):
@@ -126,3 +142,5 @@ def main() -> None:
                 )
     if failed:
         raise RuntimeError(f"atomization discarded {failed} record(s); output is incomplete")
+    return {"records_cached": len(cached_ids), "records_failed": failed,
+            "output": str(output), "provider": provider}

@@ -254,12 +254,17 @@ def main() -> None:
     parser.add_argument("--wandb-mode", choices=["disabled", "offline", "online"], default="disabled")
     parser.add_argument("--wandb-project", default="doc-to-atom")
     args = parser.parse_args()
+    print(json.dumps(evaluate_checkpoint(args), ensure_ascii=False, indent=2))
+
+
+def evaluate_checkpoint(args: argparse.Namespace) -> dict:
+    """Generate/score predictions without invoking argparse or a shell process."""
 
     if args.predictions:
         if any((args.config, args.checkpoint, args.output)):
-            parser.error("--predictions cannot be combined with generation arguments")
+            raise ValueError("--predictions cannot be combined with generation arguments")
         if bool(args.data) != bool(args.source):
-            parser.error("score-only source join requires both --data and --source")
+            raise ValueError("score-only source join requires both --data and --source")
         rows = [
             json.loads(line)
             for line in Path(args.predictions).read_text(encoding="utf-8").splitlines()
@@ -272,7 +277,7 @@ def main() -> None:
             enrich_rows(rows, read_jsonl(args.data))
     else:
         if not all((args.config, args.data, args.source, args.checkpoint, args.output)):
-            parser.error("generation requires --config --data --source --checkpoint --output")
+            raise ValueError("generation requires --config --data --source --checkpoint --output")
         destination = Path(args.output)
         if destination.exists():
             raise FileExistsError(f"refusing to overwrite predictions: {destination}")
@@ -385,4 +390,4 @@ def main() -> None:
                     run.save(str(manifest))
         finally:
             run.finish()
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
