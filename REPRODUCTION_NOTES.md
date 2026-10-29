@@ -2,22 +2,39 @@
 
 ## Scope and status
 
-This repository implements the disclosed Doc2Atom architecture rather than applying Doc-to-LoRA independently to chunks. It does not modify or depend on `trustmargin-experiments`. Doc-to-LoRA is only an optional evaluation baseline.
+This repository is a partial reconstruction of Doc2Atom, not Doc-to-LoRA per chunk
+and not a demonstrated numerical reproduction. See
+`docs/MINIMAX_MIGRATION_PAPER_AUDIT.md` for the current component-by-component audit.
+Doc-to-LoRA is only an optional evaluation adapter; its actual checkpoints/training
+and benchmark reproduction are not bundled.
 
-The official GitHub repository currently contains no code beyond its README. The audit records its
-exact commit in `PAPER_SPEC.md`; this reproduction should be re-audited when the authors publish code.
+The earlier upstream audit found only a README at the commit in `PAPER_SPEC.md`.
+That is historical evidence, not a fresh claim about the current upstream state.
 
 ## Mandatory assumptions
 
 1. Prompts under `atomization/prompts.py` are reconstructed from Appendix B and explicitly label themselves `RECONSTRUCTED_PROMPT_NOT_OFFICIAL`.
 2. Metadata bias is a trainable linear combination of four scalar features. Semantic type is represented by a learned scalar embedding and conflict membership by a learned binary scalar; the paper does not disclose this encoding.
-3. Supporting atoms are treated as routing positives by default because `relevant = gold union supporting`; this can be disabled to follow the narrower wording of Eq. 4.
+3. The current loop supervises **gold-only** routing masks; supporting masks are
+   recorded for diagnostics, not treated as positives. This follows Eq. 4's wording.
 4. Sparse mask logits are routing-weight averaged, passed through sigmoid, and applied once to the adapter output. This preserves a gate interpretation without accidentally squaring the gate through both factors.
-5. `L_confidence` uses mean-squared alignment between selected routing mass and normalized annotation confidence. `L_conflict` uses per-group listwise cross-entropy. Both exact formulas are unpublished.
+5. `L_confidence` uses mean-squared alignment between selected routing mass and
+   normalized annotation confidence. The paper describes per-group listwise CE
+   for conflict, but does not disclose reductions or all corner-case rules.
 6. Micro-KV is represented by a strict interface but disabled in paper configs because its disclosed shapes and main-experiment status are insufficient.
-7. No null-memory gate is added to the paper path. Irrelevant suppression follows Eq. 5; this exposes rather than hides the paper's softmax/near-zero inconsistency.
+7. **Existing architectural/loss deviation:** the router adds a learned null-memory
+   candidate and the training loop adds a null-decision term under the route
+   coefficient. This changes the top-K normalization and is not specified in the
+   paper. It is retained, not hidden or silently removed in the MiniMax migration.
+8. New atomization uses MiniMax-M3.1-Flash, not paper MiniMax-M2.5. The default
+   completion budget is 8192 including thinking, probe count 2, provider reasoning
+   depth `max`; these are not paper settings. Sampling is provider-controlled.
 
 ## Resource-constrained deviations
+
+The first two entries below describe **historical research outputs**, not an
+available annotation backend. The previous provider implementation has been
+removed; its datasets, raw responses and provenance are intentionally preserved.
 
 - The completed real-data smoke used OpenAI `gpt-4.1-mini-2025-04-14` instead of
   MiniMax-M2.5 for all three annotation passes. Every output record carries this
@@ -37,9 +54,14 @@ exact commit in `PAPER_SPEC.md`; this reproduction should be re-audited when the
 
 ## Faithfulness boundary
 
-`gemma_paper.yaml`, `qwen_paper.yaml`, the data schemas, compiler tensor shapes, routing stages, composition equation, injection targets, losses, and curriculum preserve disclosed behavior. Any runnable value absent from the paper is isolated in a separate config and emitted in the run manifest.
+`gemma_paper.yaml` and `qwen_paper.yaml` preserve many disclosed hyperparameters and
+leave unknown weights null. That is not a guarantee of a paper-faithful executable
+path: null routing, gate placement, metadata encoding, loss reductions, data caps,
+prompting, and the unwired distributed CLI remain limitations in the current code.
+No architecture, training loss, checkpoint format or fingerprint algorithm was
+changed during the MiniMax migration.
 
-The small real-data overfit diagnostic and its prompt comparison are documented in
-`SMALL_OVERFIT_REPORT.md`. Its Stage-2 start, zero warmup, duplicated examples, OpenAI retry,
-GPU/CPU placement, and SDPA fallback are diagnostics or runtime deviations, not paper settings.
+Earlier small-overfit observations referenced a report no longer present in this
+checkout. Their Stage-2 start, zero warmup, duplicated examples, provider retry,
+GPU/CPU placement and SDPA fallback are diagnostics, not evidence of paper metrics.
 

@@ -7,7 +7,7 @@ from typing import Any
 
 REDACTED = "<redacted>"
 # Match complete credential names, optionally qualified by a service/environment
-# prefix (e.g. OPENAI_API_KEY). Token credentials use explicit names: arbitrary
+# prefix (e.g. MINIMAX_API_KEY). Token credentials use explicit names: arbitrary
 # *_token fields may be vocabulary values, including multimodal/custom tokens.
 _CREDENTIAL_NAMES = frozenset({
     "api_key", "apikey", "password", "passwd", "secret", "secrets",
@@ -17,6 +17,8 @@ _CREDENTIAL_NAMES = frozenset({
     "oauth_token", "client_token", "hf_token", "huggingface_token", "github_token",
     "gitlab_token", "gh_token", "wandb_token", "openai_token", "minimax_token",
 })
+# Historical token names stay recognized solely for safe redaction of old run
+# snapshots and fingerprint compatibility, not for selecting annotation providers.
 
 
 def is_credential_key(key: object) -> bool:

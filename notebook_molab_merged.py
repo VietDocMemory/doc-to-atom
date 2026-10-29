@@ -240,14 +240,9 @@ def _(
             except subprocess.CalledProcessError:
                 print("Cached atomization incomplete or invalid; retrying with --resume --retry-invalid")
         if not complete:
-            provider_code = ("import os;print('openai' if os.getenv('OPENAI_API_KEY') "
-                             "else ('minimax' if os.getenv('MINIMAX_API_KEY') "
-                             "and os.getenv('MINIMAX_BASE_URL') else 'none'))")
-            provider = run_cmd(["uv", "run", "python", "-c", provider_code],
-                               capture=True).stdout.strip()
-            if provider not in ("openai", "minimax"):
-                raise RuntimeError("Atomization requires OPENAI_API_KEY or MiniMax credentials")
-            run_cmd(["uv", "run", "doc2atom-atomize", "--provider", provider,
+            run_cmd(["uv", "run", "python", "-c",
+                     "import os; assert os.getenv('MINIMAX_API_KEY'), 'Atomization requires MINIMAX_API_KEY'"])
+            run_cmd(["uv", "run", "doc2atom-atomize",
                      "--input", str(raw_path), "--output", str(atoms_path),
                      "--resume", "--retry-invalid"])
         else:

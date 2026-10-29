@@ -1,4 +1,6 @@
 # End-to-End Evaluation Implementation Plan
+> Historical plan: legacy dataset names below identify research artifacts, not a
+> currently supported annotation provider. See `../../../README.md` for current commands.
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the score-only CLI with a resumable checkpoint-to-predictions evaluator covering memory construction, routing, dynamic LoRA composition, generation, retrieval/answer/refusal metrics, and operational statistics.

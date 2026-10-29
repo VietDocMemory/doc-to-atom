@@ -16,9 +16,20 @@ class RawProviderResponse(BaseModel):
     model: str
     content: str
     sha256: str
+    # Optional additions: old sidecars remain readable without reserialization.
+    raw_body: str | None = None
+    raw_body_sha256: str | None = None
+    http_status: int | None = None
+    requested_model: str | None = None
+    request_parameters: dict | None = None
+    latency_ms: float | None = None
 
     @classmethod
     def capture(cls, *, content: str, **metadata) -> RawProviderResponse:
+        if metadata.get("raw_body") is not None:
+            metadata["raw_body_sha256"] = hashlib.sha256(
+                metadata["raw_body"].encode("utf-8")
+            ).hexdigest()
         return cls(
             **metadata,
             content=content,

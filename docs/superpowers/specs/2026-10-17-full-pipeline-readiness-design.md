@@ -1,5 +1,9 @@
 # Doc-to-Atom Full-Pipeline Readiness Design
 
+> Historical design, not a current implementation contract. Multi-provider
+> annotation has been superseded by MiniMax-only HTTP transport. Consult
+> `../../MINIMAX_MIGRATION_PAPER_AUDIT.md` for verified capabilities and gaps.
+
 Date: 2026-10-17  
 Status: approved for planning; the user delegated remaining design decisions  
 Production target: Molab Linux multi-GPU  

@@ -1,22 +1,15 @@
 import hashlib
-import importlib
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
+from doc_to_atom.atomization.client import MiniMaxConfig, ThreeStageXMLAtomizer
+from doc_to_atom.atomization import provenance
 from doc_to_atom.atomization.parser import parse_question_roles_xml
-
-try:
-    provenance = importlib.import_module("doc_to_atom.atomization.provenance")
-except ModuleNotFoundError:
-    provenance = SimpleNamespace()
-
 
 class _FakeTransportAtomizer(ThreeStageXMLAtomizer):
     def __init__(self, responses):
-        super().__init__(OpenAIConfig(api_key="test"), provider="openai")
+        super().__init__(MiniMaxConfig(api_key="test"))
         self._responses = iter(responses)
 
     def _request(self, system: str, user: str) -> str:

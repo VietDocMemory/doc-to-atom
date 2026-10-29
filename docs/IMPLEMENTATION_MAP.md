@@ -1,5 +1,9 @@
 # Paper-to-code implementation map
 
+This is a file index, **not** an implementation-completeness checklist. Current
+status, explicit deviations and missing paths are audited in
+`MINIMAX_MIGRATION_PAPER_AUDIT.md`.
+
 | Paper component | Implementation |
 |---|---|
 | Appendix B atom schemas, relations and QA types | `atomization/models.py` |
@@ -17,7 +21,7 @@
 | Teacher/student execution | `training/system.py` |
 | Curriculum, ten objectives and optimization loop | `training/curriculum.py`, `losses/objectives.py`, `training/loop.py` |
 | Offline memory-bank build and online query | `inference/build_memory.py`, `inference/query.py` |
-| Metrics, required baselines and trace logging | `evaluation/` |
+| Metrics, baseline interfaces (not bundled D2L training/checkpoints), traces | `evaluation/` |
 | Distributed checkpoint/save resume and Molab gate | `training/checkpoint.py`, `training/distributed.py`, `training/molab_gate.py` |
 
 MicroKV is represented at the compiler/composer interface, but training with it

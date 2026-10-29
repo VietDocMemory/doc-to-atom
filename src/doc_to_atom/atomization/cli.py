@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from doc_to_atom.config import load_project_env
 
-from .client import MiniMaxAtomizer, MiniMaxConfig, OpenAIAtomizer, OpenAIConfig
+from .client import DEFAULT_MINIMAX_MODEL, MiniMaxAtomizer, MiniMaxConfig
 from .models import QuestionAnnotation, StructuredRecord
 from .provenance import write_raw_response_jsonl
 
@@ -50,33 +53,37 @@ def main() -> None:
     parser.add_argument(
         "--retry-invalid",
         action="store_true",
-        help="With --resume, discard cached records containing invalid spans and re-atomize them",
+        help="With --resume, snapshot the old output, replace invalid-span records and re-atomize them",
     )
     parser.add_argument(
         "--provider",
-        choices=["minimax", "openai"],
-        default=os.getenv("ANNOTATION_PROVIDER", "minimax"),
+        choices=["minimax"],
+        default="minimax",
+        help="Only MiniMax is supported (flag retained for existing MiniMax commands)",
     )
+    parser.add_argument("--model", default=DEFAULT_MINIMAX_MODEL)
+    parser.add_argument("--max-completion-tokens", type=int, default=8192)
+    parser.add_argument("--reasoning-effort", choices=["low", "medium", "high", "xhigh", "max"], default="max")
     args = parser.parse_args()
     print(json.dumps(atomize_file(
         args.input, args.output, provider=args.provider, resume=args.resume,
         retry_invalid=args.retry_invalid, raw_responses=args.raw_responses,
+        model=args.model, max_completion_tokens=args.max_completion_tokens,
+        reasoning_effort=args.reasoning_effort,
     ), indent=2))
 
 
 def atomize_file(
-    input_path: str | Path, output_path: str | Path, *, provider: str = "openai",
+    input_path: str | Path, output_path: str | Path, *, provider: str = "minimax",
     resume: bool = True, retry_invalid: bool = False,
     raw_responses: str | Path | None = None,
+    model: str = DEFAULT_MINIMAX_MODEL, max_completion_tokens: int = 8192,
+    reasoning_effort: str = "max",
 ) -> dict:
     """Atomize source JSONL in-process; resume appends only uncached record IDs."""
-    if provider not in {"openai", "minimax"}:
+    if provider != "minimax":
         raise ValueError(f"unsupported annotation provider: {provider}")
-    atomizer = (
-        OpenAIAtomizer(OpenAIConfig.from_env())
-        if provider == "openai"
-        else MiniMaxAtomizer(MiniMaxConfig.from_env())
-    )
+    atomizer = None  # Cache-only resume does not require credentials or a network request.
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     raw_path = Path(raw_responses or f"{output}.raw-responses.jsonl")
@@ -85,9 +92,9 @@ def atomize_file(
         if output.exists() or raw_path.exists():
             raise FileExistsError("refusing to overwrite existing atomization output or raw responses")
         raw_path.touch()
-    atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_path)
     cached_ids: set[str] = set()
     retained_lines: list[str] = []
+    removed_invalid = False
     if resume and output.exists():
         with output.open(encoding="utf-8") as cached:
             for line in cached:
@@ -95,13 +102,32 @@ def atomize_file(
                     continue
                 record = StructuredRecord.model_validate_json(line)
                 if retry_invalid and any(not atom.span_valid for atom in record.atoms):
+                    removed_invalid = True
                     continue
                 cached_ids.add(record.record_id)
                 retained_lines.append(line.rstrip("\n"))
-        if retry_invalid:
-            with output.open("w", encoding="utf-8", newline="\n") as rewritten:
-                for line in retained_lines:
-                    rewritten.write(line + "\n")
+        if retry_invalid and removed_invalid:
+            original = output.read_bytes()
+            replacement = ("\n".join(retained_lines) + ("\n" if retained_lines else "")).encode("utf-8")
+            if replacement != original:
+                # Explicit retries may replace invalid records, but never destroy
+                # the previous research artifact or its append-only raw sidecar.
+                digest = hashlib.sha256(original).hexdigest()
+                backup = output.with_name(f"{output.name}.before-retry-{digest}.jsonl")
+                if backup.exists():
+                    if backup.read_bytes() != original:
+                        raise ValueError(f"retry backup differs: {backup}")
+                else:
+                    with backup.open("xb") as snapshot:
+                        snapshot.write(original)
+                with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as rewritten:
+                    temporary = Path(rewritten.name)
+                    rewritten.write(replacement)
+                try:
+                    os.replace(temporary, output)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        LOGGER.warning("Cached records are reused unchanged, including historical provider/model provenance")
     failed = 0
     mode = "a" if resume else "x"
     with (
@@ -113,6 +139,12 @@ def atomize_file(
             record_id = str(raw.get("id", index))
             if record_id in cached_ids:
                 continue
+            if atomizer is None:
+                config = replace(MiniMaxConfig.from_env(), model=model,
+                                 max_completion_tokens=max_completion_tokens,
+                                 reasoning_effort=reasoning_effort)
+                atomizer = MiniMaxAtomizer(config)
+                atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_path)
             questions = [
                 QuestionAnnotation(
                     question_id=_source_question_id(item),

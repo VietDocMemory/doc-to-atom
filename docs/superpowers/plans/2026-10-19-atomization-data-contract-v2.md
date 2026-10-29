@@ -1,5 +1,8 @@
 # Atomization Data Contract v2 Implementation Plan
 
+> Historical plan: old provider commands are retained as design history, not
+> runnable instructions. Current annotation is MiniMax-only; use `../../../README.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make atomization preserve exact source answers, join provider role annotations to an authoritative question set by ID, repair role overlap transparently, and certify the resulting v2 data before a larger canary.

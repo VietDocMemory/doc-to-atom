@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from openai import OpenAI
+import httpx
 
 from .models import AnnotationMeta, QuestionAnnotation, StructuredRecord
 from .parser import parse_atoms_xml, parse_question_roles_xml
@@ -21,71 +22,124 @@ from .question_join import (
 from .validation import validate_record
 
 
+DEFAULT_MINIMAX_MODEL = "MiniMax-M3.1-Flash"
+MINIMAX_CHAT_ENDPOINT = "https://api.minimax.io/v1/chat/completions"
+
+
 @dataclass
 class MiniMaxConfig:
-    api_key: str
-    base_url: str
-    model: str = "MiniMax-M2.5"
-    temperature: float = 0.0  # ASSUMPTION: paper does not publish decoding settings.
-    max_tokens: int = 8192  # ASSUMPTION.
+    api_key: str = field(repr=False)
+    model: str = DEFAULT_MINIMAX_MODEL  # DEVIATION: paper uses MiniMax-M2.5.
+    max_completion_tokens: int = 8192  # Budget assumption, includes thinking tokens.
     irrelevant_probe_count: int = 2  # ASSUMPTION.
+    reasoning_effort: str = "max"  # Provider default, not a paper hyperparameter.
+    timeout_seconds: float = 180.0
+
+    def __post_init__(self) -> None:
+        if not self.api_key.strip():
+            raise ValueError("MINIMAX_API_KEY must not be empty")
+        if not self.model.startswith("MiniMax-"):
+            raise ValueError("annotation requires a MiniMax model ID")
+        if self.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("invalid MiniMax reasoning_effort")
+        if self.max_completion_tokens < 1 or self.timeout_seconds <= 0:
+            raise ValueError("completion budget and timeout must be positive")
 
     @classmethod
     def from_env(cls) -> MiniMaxConfig:
         return cls(
             api_key=os.environ["MINIMAX_API_KEY"],
-            base_url=os.environ["MINIMAX_BASE_URL"],
-            model=os.getenv("MINIMAX_MODEL", "MiniMax-M2.5"),
         )
 
 
-@dataclass
-class OpenAIConfig:
-    api_key: str
-    model: str = "gpt-4.1-mini"
-    temperature: float = 0.0
-    max_tokens: int = 8192
-    irrelevant_probe_count: int = 2
-    decomposition_retries: int = 1  # REPRODUCTION_DEVIATION: provider robustness retry.
-
-    @classmethod
-    def from_env(cls) -> OpenAIConfig:
-        return cls(
-            api_key=os.environ["OPENAI_API_KEY"],
-            model=os.getenv("OPENAI_ANNOTATION_MODEL", "gpt-4.1-mini"),
-        )
+class MiniMaxAPIError(RuntimeError):
+    """A transport/provider failure; never silently spend on subsequent records."""
 
 
 class ThreeStageXMLAtomizer:
-    def __init__(
-        self, config: MiniMaxConfig | OpenAIConfig, provider: str, base_url: str | None = None
-    ):
+    def __init__(self, config: MiniMaxConfig):
         self.config = config
-        self.provider = provider
+        self.provider = "minimax"
         self.resolved_model = config.model
         self.last_errors: list[str] = []
         self.last_raw_responses: list[RawProviderResponse] = []
         self.response_sink: Callable[[RawProviderResponse], None] | None = None
         self._active_record_id = ""
         self._stage_attempts: Counter[str] = Counter()
-        self.client = OpenAI(api_key=config.api_key, base_url=base_url)
+        self._response_metadata: dict = {}
+        self._response_error: str | None = None
 
     def _request(self, system: str, user: str) -> str:
-        response = self.client.chat.completions.create(
-            model=self.config.model,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        )
-        self.resolved_model = response.model
-        return response.choices[0].message.content or ""
+        # Official MiniMax Chat Completions wire format; no vendor SDK or
+        # ambient provider credentials/base-URL selection. Never follow redirects.
+        parameters = {
+            "model": self.config.model,
+            "max_completion_tokens": self.config.max_completion_tokens,
+            "reasoning_split": True,
+        }
+        if self.config.model == "MiniMax-M3.1-Flash":
+            parameters["reasoning_effort"] = self.config.reasoning_effort
+        started = time.perf_counter()
+        try:
+            response = httpx.post(
+                MINIMAX_CHAT_ENDPOINT,
+                headers={"Authorization": f"Bearer {self.config.api_key}",
+                         "Content-Type": "application/json"},
+                json={**parameters, "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ]},
+                timeout=self.config.timeout_seconds,
+                follow_redirects=False,
+            )
+        except httpx.RequestError:
+            raise MiniMaxAPIError("MiniMax connection failed or timed out; no automatic retry") from None
+        self._response_metadata = {
+            "raw_body": response.text,
+            "http_status": response.status_code,
+            "requested_model": self.config.model,
+            "request_parameters": parameters,
+            "latency_ms": (time.perf_counter() - started) * 1000,
+        }
+        if not response.is_success:
+            hint = {
+                401: "check MINIMAX_API_KEY",
+                403: "check model/account permissions",
+                402: "insufficient balance; check MiniMax billing",
+                429: "rate limited; retry manually later",
+            }.get(response.status_code, "inspect the response sidecar before retrying")
+            self._response_error = f"MiniMax HTTP {response.status_code}: {hint}"
+            return ""
+        try:
+            payload = response.json()
+            base = payload.get("base_resp") or {}
+            if base.get("status_code", 0) != 0:
+                self._response_error = f"MiniMax provider error {base['status_code']}; inspect response sidecar"
+                return ""
+            self.resolved_model = payload["model"]
+            choice = payload["choices"][0]
+            content = choice["message"].get("content") or ""
+            if not isinstance(content, str) or not isinstance(self.resolved_model, str):
+                raise ValueError("invalid text/model")
+            if choice.get("finish_reason") != "stop" or not content.strip():
+                self._response_error = (
+                    f"MiniMax incomplete completion ({choice.get('finish_reason')}); "
+                    "review max_completion_tokens (includes thinking) and response sidecar"
+                )
+            return content
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            self._response_error = "MiniMax returned an invalid Chat Completions response; inspect sidecar"
+            return ""
 
     def _begin_record(self, record_id: str) -> None:
         self._active_record_id = record_id
+        self.resolved_model = self.config.model
         self._stage_attempts = Counter()
         self.last_raw_responses = []
 
     def _call(self, stage: str, system: str, user: str) -> str:
+        self._response_metadata = {}
+        self._response_error = None
         content = self._request(system, user)
         self._stage_attempts[stage] += 1
         captured = RawProviderResponse.capture(
@@ -95,16 +149,16 @@ class ThreeStageXMLAtomizer:
             provider=self.provider,
             model=self.resolved_model,
             content=content,
+            **self._response_metadata,
         )
         self.last_raw_responses.append(captured)
         if self.response_sink is not None:
             self.response_sink(captured)
-        return content
-
-    @staticmethod
-    def _span_is_verbatim(span: str, context: str) -> bool:
-        normalize = lambda value: re.sub(r"\s+", " ", value).strip()
-        return normalize(span) in normalize(context)
+        if self._response_error:
+            raise MiniMaxAPIError(self._response_error)
+        # Older MiniMax models may include inline thinking. Keep raw content
+        # intact in provenance and exclude thinking only from the parser input.
+        return re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
 
     @staticmethod
     def _document_xml(context: str) -> str:
@@ -158,29 +212,13 @@ class ThreeStageXMLAtomizer:
             document_xml = self._document_xml(context)
             xml = self._call("decomposition", DECOMPOSITION_SYSTEM, f"{adapter}\n{document_xml}")
             atoms, warnings = parse_atoms_xml(xml)
-            invalid_spans = [
-                atom.source_span
-                for atom in atoms
-                if not self._span_is_verbatim(atom.source_span, context)
-            ]
-            if invalid_spans and getattr(self.config, "decomposition_retries", 0):
-                repair = (
-                    "\nYour previous response used non-verbatim source_span values. Regenerate the "
-                    "complete atom XML. For each fact that joins non-contiguous clauses, either copy "
-                    "the entire contiguous source sentence or split it into separate atoms. Never use "
-                    "ellipsis. Invalid previous spans:\n- " + "\n- ".join(invalid_spans)
-                )
-                xml = self._call(
-                    "decomposition",
-                    DECOMPOSITION_SYSTEM + repair,
-                    f"{adapter}\n{document_xml}",
-                )
-                atoms, warnings = parse_atoms_xml(xml)
             meta.warnings.extend(warnings)
             if not atoms:
                 meta.errors.append("context decomposition returned no valid atoms")
                 self.last_errors = list(meta.errors)
                 return None  # Appendix B: discard the whole sample.
+        except MiniMaxAPIError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- Appendix B requires per-record recovery.
             meta.decomposition_parse_status = "failed"
             meta.errors.append(str(exc))
@@ -208,6 +246,8 @@ class ThreeStageXMLAtomizer:
                             is_generated_irrelevant=True,
                         )
                     )
+        except MiniMaxAPIError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- optional probes must not drop the record.
             meta.irrelevant_parse_status = "failed_ignored"
             meta.warnings.append(f"irrelevant probe generation failed: {exc}")
@@ -235,9 +275,12 @@ class ThreeStageXMLAtomizer:
                     meta.warnings.append(
                         f"{qa.question_id}: rescued probe has no source answer; excluded from LM training"
                     )
+        except MiniMaxAPIError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- reject incomplete/corrupt QA records.
             meta.question_parse_status = "failed"
             meta.errors.append(f"question annotation failed: {exc}")
+            self._stamp_provenance(meta)
             self.last_errors = list(meta.errors)
             # Appendix B.4: keep the validated atom bank, without unreliable
             # question annotations. This record is not a training example.
@@ -260,21 +303,17 @@ class ThreeStageXMLAtomizer:
             qa_pairs=annotated,
             annotation_meta=meta,
         )
-        if self.provider == "openai":
-            record.annotation_meta.prompt_provenance = (
-                "RECONSTRUCTED_PROMPT_NOT_OFFICIAL; REPRODUCTION_DEVIATION: "
-                f"OpenAI replaces MiniMax-M2.5; model={self.resolved_model}"
-            )
+        self._stamp_provenance(record.annotation_meta)
         return validate_record(record)
+
+    def _stamp_provenance(self, meta: AnnotationMeta) -> None:
+        meta.prompt_provenance = (
+            "RECONSTRUCTED_PROMPT_NOT_OFFICIAL; "
+            f"provider=minimax; requested_model={self.config.model}; model={self.resolved_model}"
+        )
+        if self.config.model != "MiniMax-M2.5" or self.resolved_model != "MiniMax-M2.5":
+            meta.prompt_provenance += "; REPRODUCTION_DEVIATION: annotator differs from paper MiniMax-M2.5"
 
 
 class MiniMaxAtomizer(ThreeStageXMLAtomizer):
-    def __init__(self, config: MiniMaxConfig):
-        super().__init__(config, provider="minimax", base_url=config.base_url)
-
-
-class OpenAIAtomizer(ThreeStageXMLAtomizer):
-    """REPRODUCTION_DEVIATION: OpenAI replaces the paper's MiniMax-M2.5 annotator."""
-
-    def __init__(self, config: OpenAIConfig):
-        super().__init__(config, provider="openai")
+    """Public MiniMax-only entry point for the three-stage annotation pipeline."""

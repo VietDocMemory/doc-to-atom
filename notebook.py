@@ -70,8 +70,7 @@ def _():
         f"GPU: {gpu_count} × {gpu_name or 'none'}; VRAM: {gpu_gib or 0:.1f} GiB; "
         f"BF16: {bf16}; flash-attn installed: {flash_available}. "
         f"{'Ready for single-GPU preflight.' if hardware_ok else 'GPU preflight blocked.'}\n\n"
-        f"Secrets: OpenAI={secret_status['OPENAI_API_KEY']}, "
-        f"MiniMax={bool(os.getenv('MINIMAX_API_KEY'))}, "
+        f"Secrets: MiniMax={secret_status['MINIMAX_API_KEY']}, "
         f"HF_TOKEN={secret_status['HF_TOKEN']}. W&B: offline. "
         f"No DataLoader is constructed by the training loop: num_workers=2, "
         f"persistent_workers and prefetch_factor are **not implemented**. "
@@ -94,8 +93,8 @@ def _(dataset_choice, mo, os, prepare_button, repo_dir):
     mo.output.append(mo.md(
         f"## Data\nSource: `{raw_path}`; atoms: `{atoms_path}`. "
         "Upload/choose matching raw and atomized files before running; "
-        "an atomized JSONL cannot be used as raw source. The OpenAI/MiniMax "
-        "provider is selected from available credentials."
+        "an atomized JSONL cannot be used as raw source. New annotation uses "
+        "MiniMax-M3.1-Flash (a deviation from the paper's MiniMax-M2.5)."
     ))
     if prepare_button.value:
         if not raw_path.is_file():
@@ -109,11 +108,10 @@ def _(dataset_choice, mo, os, prepare_button, repo_dir):
             except ValueError:
                 pass  # Invalid cached spans need explicit review; --resume won't silently replace them.
         if not existing_ok:
-            if not os.getenv("OPENAI_API_KEY") and not (os.getenv("MINIMAX_API_KEY") and os.getenv("MINIMAX_BASE_URL")):
-                raise RuntimeError("Incomplete atoms: configure a provider key before resuming")
-            provider = "openai" if os.getenv("OPENAI_API_KEY") else "minimax"
+            if not os.getenv("MINIMAX_API_KEY"):
+                raise RuntimeError("Incomplete atoms: configure MINIMAX_API_KEY before resuming")
             with mo.status.spinner(title="Resuming atomization (no cached records overwritten)"):
-                atomize_file(raw_path, atoms_path, provider=provider, resume=True)
+                atomize_file(raw_path, atoms_path, resume=True)
         _stats = validate_jsonl(atoms_path, source_path=raw_path, reject_span_mismatch=True)
         if _stats["errors"] or _stats["invalid_spans"] or _stats["records"] != source_count:
             raise ValueError(f"Source contract failed; do not train: {_stats}")

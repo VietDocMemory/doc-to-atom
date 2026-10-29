@@ -42,7 +42,7 @@ uv run python -m pytest tests/ -q
 if (!(Test-Path data/medium_squad_raw.jsonl)) {
   uv run python scripts/prepare_dataset.py --dataset squad --train-records 500 --validation-records 100 --output data/medium_squad_raw.jsonl
 }
-# Put MINIMAX_API_KEY and MINIMAX_BASE_URL in an ignored .env; do not commit secrets.
+# Put only MINIMAX_API_KEY in an ignored .env for annotation; do not commit secrets.
 # Never overwrite partial atomization: --resume continues existing output.
 if (Test-Path data/medium_squad_atoms.jsonl) {
   uv run python scripts/atomize.py --input data/medium_squad_raw.jsonl --output data/medium_squad_atoms.jsonl --resume

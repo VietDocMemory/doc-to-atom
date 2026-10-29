@@ -8,9 +8,8 @@ from dotenv import load_dotenv
 
 SECRET_NAMES = (
     "HF_TOKEN",
-    "OPENAI_API_KEY",
+    "MINIMAX_API_KEY",
     "WANDB_API_KEY",
-    "OPENAI_ANNOTATION_MODEL",
 )
 
 

@@ -30,26 +30,23 @@ def test_loads_molab_env_without_overriding_injected_secret(
     env_file = tmp_path / ".env"
     env_file.write_text(
         "HF_TOKEN=file-token\n"
-        "OPENAI_API_KEY=openai-token\n"
-        "WANDB_API_KEY=wandb-token\n"
-        "OPENAI_ANNOTATION_MODEL=gpt-test\n",
+        "MINIMAX_API_KEY=minimax-token\n"
+        "WANDB_API_KEY=wandb-token\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("HF_TOKEN", "injected-token")
-    for name in ("OPENAI_API_KEY", "WANDB_API_KEY", "OPENAI_ANNOTATION_MODEL"):
+    for name in ("MINIMAX_API_KEY", "WANDB_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
     status = load_molab_environment(env_file)
 
     assert os.environ["HF_TOKEN"] == "injected-token"
-    assert os.environ["OPENAI_API_KEY"] == "openai-token"
+    assert os.environ["MINIMAX_API_KEY"] == "minimax-token"
     assert os.environ["WANDB_API_KEY"] == "wandb-token"
-    assert os.environ["OPENAI_ANNOTATION_MODEL"] == "gpt-test"
     assert status == {
         "HF_TOKEN": True,
-        "OPENAI_API_KEY": True,
+        "MINIMAX_API_KEY": True,
         "WANDB_API_KEY": True,
-        "OPENAI_ANNOTATION_MODEL": True,
     }
 
 

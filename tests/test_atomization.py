@@ -6,7 +6,7 @@ from doc_to_atom.atomization.models import (
 )
 from doc_to_atom.atomization.parser import parse_atoms_xml, parse_questions_xml
 from doc_to_atom.atomization.validation import validate_record
-from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
+from doc_to_atom.atomization.client import MiniMaxConfig, ThreeStageXMLAtomizer
 from doc_to_atom.atomization.question_join import join_question_roles
 from doc_to_atom.atomization.models import QuestionRoleAnnotation
 
@@ -34,7 +34,7 @@ def test_question_xml_parser():
     assert not warnings
 
 
-def test_openai_attribute_xml_and_abstraction_repair():
+def test_attribute_xml_and_abstraction_repair():
     atom_xml = """<atoms><atom><atom_id>a1</atom_id><semantic_type>fact_claim</semantic_type>
     <content>A fact.</content><source_span>A fact.</source_span><retrieval_text>A fact.</retrieval_text>
     <is_answer_bearing>true</is_answer_bearing><abstraction_level>fact_claim</abstraction_level>
@@ -145,7 +145,7 @@ def test_generated_probe_can_be_rescued_as_in_appendix_f():
 def test_question_annotation_failure_retains_validated_atom_only_record():
     class FakeAtomizer(ThreeStageXMLAtomizer):
         def __init__(self):
-            super().__init__(OpenAIConfig(api_key="test"), "openai")
+            super().__init__(MiniMaxConfig(api_key="test"))
 
         def _request(self, system, user):
             if "Decompose" in system:

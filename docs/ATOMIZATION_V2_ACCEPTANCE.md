@@ -1,5 +1,9 @@
 # Atomization data contract v2 acceptance
 
+> Historical acceptance evidence. Provider/model names and measured observations
+> below are preserved, not instructions to use a removed backend. See
+> `MINIMAX_MIGRATION_PAPER_AUDIT.md` for the current MiniMax-only implementation.
+
 Date: 2026-10-19
 Scope: atomization semantics and data contracts only. No model architecture,
 training, tuning, or full-dataset run was changed or executed.

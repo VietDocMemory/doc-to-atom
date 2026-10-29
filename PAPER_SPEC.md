@@ -1,6 +1,8 @@
 # Paper specification audit
 
-Source: *Doc-to-Atom: Learning to Compile and Compose Memory Atoms*, arXiv:2606.12400v1 (10 June 2026). The complete 20-page paper, including Appendices A–F, was audited before implementation.
+Source: *Doc-to-Atom: Learning to Compile and Compose Memory Atoms*, arXiv:2606.12400v1 (10 June 2026), local `docs/2606.12400v1.pdf`, 20 pages including Appendices A–F.
+Re-read for the local MiniMax migration; current implementation gaps are in
+`docs/MINIMAX_MIGRATION_PAPER_AUDIT.md`. This specification is not a completion claim.
 
 ## Clearly specified
 
@@ -28,7 +30,9 @@ Source: *Doc-to-Atom: Learning to Compile and Compose Memory Atoms*, arXiv:2606.
 - Literal MiniMax system/user prompts, dataset adapters, model endpoint/version snapshot, decoding parameters, irrelevant-probe count, batching, retry budget, and calibration procedure.
 - Total-loss coefficients, their numeric curriculum transitions, and target sparse density `rho`.
 - Whether supporting atoms are positives in Eq. 4 (the equation says “gold mask” while the schema separately defines supporting atoms).
-- Exact listwise reranker loss, conflict loss, and confidence-alignment formulas.
+- Reranker and conflict are described as listwise cross-entropy, but their precise
+  normalization, reduction and edge-case rules are not published; the confidence
+  alignment formula is not given.
 - Exact encoding of conflict group and semantic type into the claimed four-dimensional metadata bias.
 - Sparse-gate aggregation details (logit vs probability aggregation), whether a gate multiplies both factors or the resulting delta, and any hard/straight-through sparsification.
 - Micro-KV slot count, tensor shapes, initialization, target layers, positional handling, and prefix-injection implementation; the main setting does not say whether micro-KV is enabled.
@@ -39,5 +43,9 @@ Source: *Doc-to-Atom: Learning to Compile and Compose Memory Atoms*, arXiv:2606.
 - The paper says irrelevant queries yield near-zero routing weights, but also defines final top-K weights by softmax, which always sums to one; it does not specify a null-memory gate.
 - Table 3 describes “same six benchmarks” while the main table has five in-domain datasets plus eight LongBench subsets; exact efficiency aggregation is unclear.
 
-The implementation never fills these values in `gemma_paper.yaml`. Runnable assumptions live only in `resource_constrained.yaml` and are logged as deviations.
+Paper configs retain nulls for unpublished loss weights and density. Runnable
+assumptions also appear in reconstruction/experiment configs and notebook builders,
+not only `resource_constrained.yaml`. Some existing architectural choices are
+hard-coded; see the current audit rather than interpreting a config name as proof
+of equivalence to the paper.
 

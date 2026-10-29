@@ -3,7 +3,7 @@ import importlib
 import pytest
 
 from doc_to_atom.atomization.cli import _source_question_id
-from doc_to_atom.atomization.client import OpenAIConfig, ThreeStageXMLAtomizer
+from doc_to_atom.atomization.client import MiniMaxConfig, ThreeStageXMLAtomizer
 from doc_to_atom.atomization.models import QuestionAnnotation, QuestionRoleAnnotation
 
 
@@ -124,7 +124,7 @@ def test_join_rejects_provider_attempt_to_flip_source_relevance():
 
 class _FakeAtomizer(ThreeStageXMLAtomizer):
     def __init__(self, responses):
-        super().__init__(OpenAIConfig(api_key="test", irrelevant_probe_count=1), "openai")
+        super().__init__(MiniMaxConfig(api_key="test", irrelevant_probe_count=1))
         self.responses = iter(responses)
         self.users = []
 

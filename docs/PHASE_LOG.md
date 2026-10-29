@@ -1,5 +1,9 @@
 # Phase ledger
 
+> Historical ledger, not the current backend or completion status. Old provider
+> names below describe retained research provenance. New annotation is MiniMax-only;
+> current gaps and verification are in `MINIMAX_MIGRATION_PAPER_AUDIT.md`.
+
 1. **Paper audit and isolated repository — complete.** Added `PAPER_SPEC.md`,
    `REPRODUCTION_NOTES.md`, configurations, packaging, and an independent Git
    root. The upstream repository had no code to port.

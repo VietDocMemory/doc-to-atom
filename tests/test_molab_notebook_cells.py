@@ -47,8 +47,9 @@ def test_native_atomization_resume_preserves_cached_data(tmp_path, monkeypatch):
         def __init__(self, config):
             calls.append("constructed")
 
-    monkeypatch.setattr(annotation, "OpenAIAtomizer", FakeAtomizer)
-    monkeypatch.setattr(annotation.OpenAIConfig, "from_env", lambda: object())
+    monkeypatch.setattr(annotation, "MiniMaxAtomizer", FakeAtomizer)
+    monkeypatch.setattr(annotation.MiniMaxConfig, "from_env",
+                        lambda: annotation.MiniMaxConfig(api_key="test"))
     # Resume parses valid schema records; an existing malformed cached row must
     # fail rather than silently overwrite the only copy.
     with pytest.raises(Exception):

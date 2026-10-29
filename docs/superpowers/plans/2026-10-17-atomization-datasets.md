@@ -1,4 +1,7 @@
 # Atomization and Full-Dataset Preparation Implementation Plan
+> Historical, superseded proposal: multi-provider/OpenAI commands below are not
+> supported by the current MiniMax-only CLI. Do not execute as a current runbook;
+> see `../../../README.md` and `../../MINIMAX_MIGRATION_PAPER_AUDIT.md`.
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn atomization into a provider-neutral, cached, resumable and validated pipeline, then expose reproducible preparation for SQuAD, DROP, ROPES, 2WikiMultiHopQA, QASPER, and LongBench.

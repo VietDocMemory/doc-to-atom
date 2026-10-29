@@ -36,7 +36,7 @@ JSONL and annotation credentials are not bundled. Preserve separate outputs and
 uv sync --extra train --extra test
 uv run python -m pytest tests/ -q
 uv run python scripts/prepare_dataset.py --dataset squad --train-rows 16 --validation-rows 8 --output data/squad_sanity_raw.jsonl
-# Load MINIMAX_API_KEY and MINIMAX_BASE_URL from the ignored .env.
+# Load only MINIMAX_API_KEY from the ignored .env for annotation.
 uv run python scripts/atomize.py --input data/squad_sanity_raw.jsonl --output data/squad_sanity_atoms.jsonl
 uv run python scripts/validate_data.py --input data/squad_sanity_atoms.jsonl
 uv run python scripts/train.py --config configs/reconstruction/molab_single_gpu.yaml --data data/squad_sanity_atoms.jsonl --validate-only --output outputs/local/preflight
