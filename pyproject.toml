@@ -17,6 +17,7 @@ dependencies = [
   "datasets>=3.6",
   "rouge-score>=0.1.2",
   "httpx>=0.28,<1",
+  "openai>=2,<3",
   "python-dotenv>=1.0",
   "numpy>=1.26",
   "safetensors>=0.4,<1",

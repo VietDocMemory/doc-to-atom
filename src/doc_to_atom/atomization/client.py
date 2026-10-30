@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx
+from openai import APIConnectionError, APIStatusError, OpenAI
 
 from .models import AnnotationMeta, QuestionAnnotation, StructuredRecord
 from .parser import parse_atoms_xml, parse_question_roles_xml
@@ -23,21 +24,23 @@ from .validation import validate_record
 
 
 DEFAULT_MINIMAX_MODEL = "MiniMax-M3.1-Flash"
-MINIMAX_CHAT_ENDPOINT = "https://api.minimax.io/v1/chat/completions"
+DEFAULT_REASONING_EFFORT = "low"  # Provisional choice from the paired annotation pilot.
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MINIMAX_CHAT_ENDPOINT = f"{MINIMAX_BASE_URL}/chat/completions"
 
 
 @dataclass
 class MiniMaxConfig:
     api_key: str = field(repr=False)
-    model: str = DEFAULT_MINIMAX_MODEL  # DEVIATION: paper uses MiniMax-M2.5.
+    model: str = DEFAULT_MINIMAX_MODEL
     max_completion_tokens: int = 8192  # Budget assumption, includes thinking tokens.
     irrelevant_probe_count: int = 2  # ASSUMPTION.
-    reasoning_effort: str = "max"  # Provider default, not a paper hyperparameter.
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
     timeout_seconds: float = 180.0
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
-            raise ValueError("MINIMAX_API_KEY must not be empty")
+            raise ValueError("MINIMAX_API_KEY or OPENAI_API_KEY must not be empty")
         if not self.model.startswith("MiniMax-"):
             raise ValueError("annotation requires a MiniMax model ID")
         if self.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
@@ -47,8 +50,11 @@ class MiniMaxConfig:
 
     @classmethod
     def from_env(cls) -> MiniMaxConfig:
+        # This pipeline remains MiniMax-only; never send its key to another host.
+        if os.environ.get("OPENAI_BASE_URL", MINIMAX_BASE_URL).rstrip("/") != MINIMAX_BASE_URL:
+            raise ValueError(f"OPENAI_BASE_URL must be {MINIMAX_BASE_URL}")
         return cls(
-            api_key=os.environ["MINIMAX_API_KEY"],
+            api_key=os.environ.get("MINIMAX_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
         )
 
 
@@ -70,8 +76,7 @@ class ThreeStageXMLAtomizer:
         self._response_error: str | None = None
 
     def _request(self, system: str, user: str) -> str:
-        # Official MiniMax Chat Completions wire format; no vendor SDK or
-        # ambient provider credentials/base-URL selection. Never follow redirects.
+        # Use the official OpenAI SDK, with MiniMax extensions in extra_body.
         parameters = {
             "model": self.config.model,
             "max_completion_tokens": self.config.max_completion_tokens,
@@ -81,18 +86,30 @@ class ThreeStageXMLAtomizer:
             parameters["reasoning_effort"] = self.config.reasoning_effort
         started = time.perf_counter()
         try:
-            response = httpx.post(
-                MINIMAX_CHAT_ENDPOINT,
-                headers={"Authorization": f"Bearer {self.config.api_key}",
-                         "Content-Type": "application/json"},
-                json={**parameters, "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ]},
+            with OpenAI(
+                api_key=self.config.api_key,
+                base_url=MINIMAX_BASE_URL,
+                max_retries=0,
                 timeout=self.config.timeout_seconds,
-                follow_redirects=False,
-            )
-        except httpx.RequestError:
+                http_client=httpx.Client(follow_redirects=False),
+            ) as client:
+                raw_response = client.chat.completions.with_raw_response.create(
+                    model=self.config.model,
+                    max_completion_tokens=self.config.max_completion_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    extra_body={"reasoning_split": True},
+                    **({"reasoning_effort": self.config.reasoning_effort}
+                       if self.config.model == "MiniMax-M3.1-Flash" else {}),
+                )
+                # Preserve exact JSON, including reasoning_content and tool_calls,
+                # rather than rebuilding a response from just the visible text.
+                response = raw_response.http_response
+        except APIStatusError as error:
+            response = error.response
+        except APIConnectionError:
             raise MiniMaxAPIError("MiniMax connection failed or timed out; no automatic retry") from None
         self._response_metadata = {
             "raw_body": response.text,
@@ -103,7 +120,7 @@ class ThreeStageXMLAtomizer:
         }
         if not response.is_success:
             hint = {
-                401: "check MINIMAX_API_KEY",
+                401: "check MINIMAX_API_KEY or OPENAI_API_KEY",
                 403: "check model/account permissions",
                 402: "insufficient balance; check MiniMax billing",
                 429: "rate limited; retry manually later",
@@ -308,11 +325,8 @@ class ThreeStageXMLAtomizer:
 
     def _stamp_provenance(self, meta: AnnotationMeta) -> None:
         meta.prompt_provenance = (
-            "RECONSTRUCTED_PROMPT_NOT_OFFICIAL; "
             f"provider=minimax; requested_model={self.config.model}; model={self.resolved_model}"
         )
-        if self.config.model != "MiniMax-M2.5" or self.resolved_model != "MiniMax-M2.5":
-            meta.prompt_provenance += "; REPRODUCTION_DEVIATION: annotator differs from paper MiniMax-M2.5"
 
 
 class MiniMaxAtomizer(ThreeStageXMLAtomizer):

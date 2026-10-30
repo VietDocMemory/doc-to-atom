@@ -60,5 +60,5 @@ table if evaluating Qwen. Enter measurements from the corresponding dataset's
 Provide per-stage LM/distill/route/irrelevant/protect/sparse losses, mean
 no-memory weight and adapter norm by answerable/irrelevant group, nonfinite
 counts and OOM incidents. Document deviations: one Blackwell GPU instead of
-8×A100; actual global batch 16 instead of 128; independently reconstructed
-prompts and unpublished coefficients; data/probe and scoring differences.
+8×A100; actual global batch 16 instead of 128; annotation prompts and loss
+coefficients; data/probe and scoring differences.

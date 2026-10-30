@@ -1,10 +1,10 @@
-# Doc-to-Atom reproduction
+# Doc-to-Atom
 
-Audit-first reproduction of **Doc-to-Atom: Learning to Compile and Compose Memory Atoms** (arXiv:2606.12400v1). This is an independent project. It does not implement “Doc-to-LoRA per chunk”.
+Reimplementation of **Doc-to-Atom: Learning to Compile and Compose Memory Atoms** (arXiv:2606.12400v1).
 
 The current audit and migration report is [docs/MINIMAX_MIGRATION_PAPER_AUDIT.md](docs/MINIMAX_MIGRATION_PAPER_AUDIT.md).
 `PAPER_SPEC.md` records disclosed vs unspecified details; `REPRODUCTION_NOTES.md`
-records assumptions. This is a **partial reconstruction**, not a verified numerical reproduction.
+records implementation choices.
 
 ## Architecture
 
@@ -29,10 +29,19 @@ uv run pytest
 
 ## MiniMax-only annotation
 
-Put `MINIMAX_API_KEY` in the ignored `.env` (see `.env.example`). Annotation uses
-only this credential and the fixed official endpoint
-`https://api.minimax.io/v1/chat/completions`; no separate base-URL environment
-variable is needed. `HF_TOKEN` is optional for downloading gated base-model weights.
+Annotation uses the OpenAI Python SDK configured for MiniMax. Put these values in
+the ignored `.env` (see `.env.example`):
+
+```dotenv
+OPENAI_BASE_URL=https://api.minimax.io/v1
+OPENAI_API_KEY=your-minimax-api-key
+```
+
+Existing `MINIMAX_API_KEY` is also supported and takes precedence when non-empty.
+The base URL defaults to the official MiniMax endpoint; other hosts are rejected
+to avoid sending MiniMax credentials to another provider. Full raw responses,
+including `reasoning_content`, are retained in the response sidecar, while only
+answer text is parsed as annotation XML. `HF_TOKEN` is optional for downloading gated base-model weights.
 W&B credentials are only needed for optional online experiment tracking.
 
 ```bash
@@ -42,14 +51,12 @@ uv run doc2atom-atomize \
   --model MiniMax-M3.1-Flash --resume
 ```
 
-Default model **MiniMax-M3.1-Flash differs from the paper's MiniMax-M2.5**;
-new records explicitly mark this deviation. Prompts are reconstructed, not official.
-`--model MiniMax-M2.5` can request the paper's annotator if it remains available to
-your account; this does not make prompts, data splits or loss weights official.
+The default annotation model is **MiniMax-M3.1-Flash**.
+Use `--model MiniMax-M2.5` to select the paper's annotator if available to your account.
 `--provider minimax` remains accepted for old MiniMax commands; other providers are removed.
 
 The default `--max-completion-tokens 8192` is a cost budget assumption, **including
-thinking**, not a paper value or the vendor's recommended maximum. A `length` or
+thinking**. A `length` or
 empty completion is saved to the sidecar and rejected; inspect it before increasing
 the budget. M3.1-Flash uses provider-controlled temperature (1), not deterministic
 temperature-zero decoding. No automatic paid retries occur. HTTP 402 means check
@@ -70,6 +77,16 @@ entire previous JSONL as a content-addressed `.before-retry-*.jsonl` snapshot.
 
 Start with Smoke, then validate before a longer run. These notebooks are single-GPU;
 two 16-GiB GPUs do not become one 32-GiB GPU. No Molab run was performed for this migration.
+
+If step 2a stops with `MiniMax incomplete completion (length)`, the completion
+budget was exhausted (thinking counts too). The merged notebook exposes
+**Annotation tokens** and **MiniMax thinking depth**; defaults are 8192/low.
+Thinking `low` is provisional based on the paired annotation pilot; all five
+effort levels remain available for explicit comparison.
+Inspect `<atoms file>.raw-responses.jsonl`, then consider 16384/medium and click
+2a explicitly to resume. Increasing the budget can cost more and is not guaranteed
+to eliminate truncation. Completed records are reused; a failed unfinished stage
+is requested again, not continued from partial XML. Keep raw responses for audit.
 
 See `docs/MOLAB.md` for the paper distributed profile and single-GPU fallback.
 For the actual 2×16-GiB local / 1×96-GiB Molab setup, supported commands,

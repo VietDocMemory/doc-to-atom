@@ -17,6 +17,19 @@ from doc_to_atom.atomization.models import AnnotationMeta, Atom, StructuredRecor
 from doc_to_atom.atomization.provenance import RawProviderResponse
 
 
+def mock_post(monkeypatch, handler):
+    """Intercept the SDK's HTTP transport without bypassing SDK request building."""
+    def send(client, request, **kwargs):
+        response = handler(
+            str(request.url), headers=request.headers,
+            json=json.loads(request.content), follow_redirects=client.follow_redirects,
+        )
+        response.request = request
+        return response
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+
+
 def reply(content="<atoms/>", finish="stop", **extra):
     return {
         "id": "minimax-request-id", "model": "MiniMax-M3.1-Flash",
@@ -35,8 +48,8 @@ def test_official_endpoint_bearer_and_schema(monkeypatch):
         seen.update(url=url, **kwargs)
         return httpx.Response(200, json=reply())
 
-    monkeypatch.setattr(httpx, "post", post)
-    # Obsolete variables must neither choose a provider nor redirect credentials.
+    mock_post(monkeypatch, post)
+    # A legacy MiniMax key takes precedence; arbitrary hosts cannot redirect it.
     monkeypatch.setenv("OPENAI_API_KEY", "obsolete-secret")
     monkeypatch.setenv("MINIMAX_BASE_URL", "https://untrusted.invalid")
     monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
@@ -51,7 +64,7 @@ def test_official_endpoint_bearer_and_schema(monkeypatch):
     assert not seen["follow_redirects"]
     assert seen["json"] == {
         "model": "MiniMax-M3.1-Flash", "max_completion_tokens": 8192,
-        "reasoning_effort": "max", "reasoning_split": True,
+        "reasoning_effort": "low", "reasoning_split": True,
         "messages": [{"role": "system", "content": "system"},
                      {"role": "user", "content": "document"}],
     }
@@ -64,6 +77,53 @@ def test_official_endpoint_bearer_and_schema(monkeypatch):
     assert raw.raw_body_sha256 == hashlib.sha256(raw.raw_body.encode()).hexdigest()
 
 
+def test_documented_sdk_environment(monkeypatch):
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "minimax-sdk-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.minimax.io/v1")
+    config = MiniMaxConfig.from_env()
+    assert config.api_key == "minimax-sdk-key"
+    mock_post(monkeypatch, lambda *a, **k: httpx.Response(200, json=reply()))
+    atomizer = MiniMaxAtomizer(config)
+    assert atomizer._call("decomposition", "system", "user") == "<atoms/>"
+
+
+def test_sdk_environment_cannot_redirect_minimax_credentials(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "minimax-sdk-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://untrusted.invalid/v1")
+    with pytest.raises(ValueError, match="OPENAI_BASE_URL must be"):
+        MiniMaxConfig.from_env()
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+def test_sdk_forwards_supported_reasoning_depths(effort, monkeypatch):
+    seen = {}
+
+    def post(url, **kwargs):
+        seen.update(kwargs["json"])
+        return httpx.Response(200, json=reply())
+
+    mock_post(monkeypatch, post)
+    atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test", reasoning_effort=effort))
+    atomizer._call("decomposition", "system", "user")
+    assert seen["reasoning_effort"] == effort
+    assert "temperature" not in seen
+    assert "thinking" not in seen  # Default adaptive thinking, never disabled.
+
+
+def test_older_model_omits_flash_only_reasoning_effort(monkeypatch):
+    seen = {}
+
+    def post(url, **kwargs):
+        seen.update(kwargs["json"])
+        return httpx.Response(200, json=reply(model="MiniMax-M2.5"))
+
+    mock_post(monkeypatch, post)
+    atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test", model="MiniMax-M2.5"))
+    atomizer._call("decomposition", "system", "user")
+    assert "reasoning_effort" not in seen
+
+
 @pytest.mark.parametrize("status", [301, 400, 401, 402, 403, 429, 500])
 def test_http_failures_are_captured_and_stop_without_retries(status, monkeypatch):
     calls = []
@@ -72,7 +132,7 @@ def test_http_failures_are_captured_and_stop_without_retries(status, monkeypatch
         calls.append(1)
         return httpx.Response(status, json={"error": {"type": "provider_error"}})
 
-    monkeypatch.setattr(httpx, "post", post)
+    mock_post(monkeypatch, post)
     atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test"))
     with pytest.raises(MiniMaxAPIError, match=f"HTTP {status}"):
         atomizer.atomize("r", "document", [])
@@ -86,7 +146,7 @@ def test_http_failures_are_captured_and_stop_without_retries(status, monkeypatch
     reply("", "tool_calls"), {"base_resp": {"status_code": 1008}}, {"choices": []},
 ])
 def test_incomplete_or_invalid_response_is_retained_not_parsed(payload, monkeypatch):
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, json=payload))
+    mock_post(monkeypatch, lambda *a, **k: httpx.Response(200, json=payload))
     atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test"))
     with pytest.raises(MiniMaxAPIError):
         atomizer.atomize("r", "document", [])
@@ -96,7 +156,7 @@ def test_incomplete_or_invalid_response_is_retained_not_parsed(payload, monkeypa
 
 def test_non_json_and_network_errors_do_not_leak_credentials(monkeypatch):
     atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="do-not-print"))
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, text="not-json"))
+    mock_post(monkeypatch, lambda *a, **k: httpx.Response(200, text="not-json"))
     with pytest.raises(MiniMaxAPIError, match="invalid Chat Completions"):
         atomizer.atomize("r", "document", [])
     assert atomizer.last_raw_responses[0].raw_body == "not-json"
@@ -104,7 +164,7 @@ def test_non_json_and_network_errors_do_not_leak_credentials(monkeypatch):
     def failed(*args, **kwargs):
         raise httpx.ConnectError("potentially sensitive diagnostic")
 
-    monkeypatch.setattr(httpx, "post", failed)
+    mock_post(monkeypatch, failed)
     with pytest.raises(MiniMaxAPIError, match="connection failed") as error:
         atomizer.atomize("r", "document", [])
     assert "do-not-print" not in str(error.value)
@@ -113,7 +173,7 @@ def test_non_json_and_network_errors_do_not_leak_credentials(monkeypatch):
 
 def test_inline_thinking_is_only_stripped_from_parser_input(monkeypatch):
     content = "<think>analysis with <atoms>not XML</atoms></think>\n<atoms/>"
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, json=reply(content)))
+    mock_post(monkeypatch, lambda *a, **k: httpx.Response(200, json=reply(content)))
     atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test"))
     assert atomizer._call("decomposition", "system", "user") == "\n<atoms/>"
     assert atomizer.last_raw_responses[0].content == content
@@ -141,7 +201,7 @@ def test_legacy_cache_and_raw_sidecar_are_not_relabelled_or_rewritten(tmp_path, 
     sidecar.write_text(old.model_dump_json(exclude_none=True) + "\n", encoding="utf-8")
     original, raw_original = output.read_bytes(), sidecar.read_bytes()
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("cache-only run made a request"))
+    mock_post(monkeypatch, lambda *a, **k: pytest.fail("cache-only run made a request"))
     result = cli.atomize_file(source, output, resume=True, retry_invalid=True)
     assert result["records_cached"] == 1
     assert output.read_bytes() == original
@@ -178,12 +238,15 @@ def test_non_minimax_provider_is_rejected_before_opening_files(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-def test_new_record_provenance_explicitly_marks_model_deviation():
+def test_new_record_provenance_records_provider_and_models():
     meta = AnnotationMeta()
     atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test"))
     atomizer._stamp_provenance(meta)
-    assert "MiniMax-M3.1-Flash" in meta.prompt_provenance
-    assert "REPRODUCTION_DEVIATION" in meta.prompt_provenance
+    assert meta.prompt_provenance == (
+        "provider=minimax; requested_model=MiniMax-M3.1-Flash; model=MiniMax-M3.1-Flash"
+    )
     paper_atomizer = MiniMaxAtomizer(MiniMaxConfig(api_key="test", model="MiniMax-M2.5"))
     paper_atomizer._stamp_provenance(meta)
-    assert "REPRODUCTION_DEVIATION" not in meta.prompt_provenance
+    assert meta.prompt_provenance == (
+        "provider=minimax; requested_model=MiniMax-M2.5; model=MiniMax-M2.5"
+    )

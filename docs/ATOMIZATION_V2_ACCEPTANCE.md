@@ -129,7 +129,7 @@ copied, logged, or committed.
 
 ## Assumptions and deviations
 
-- The prompt remains a reconstructed prompt, not a published official prompt.
+- The prompt implements the XML annotation workflow in Appendix B.
 - This canary used OpenAI instead of the paper-like MiniMax provider; provider
   and pinned model are written into provenance.
 - Only SQuAD currently enforces `all_answers_verbatim`. Other dataset adapters

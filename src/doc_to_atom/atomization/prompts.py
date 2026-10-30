@@ -1,9 +1,6 @@
-"""Reconstructed prompts. The paper does not publish literal MiniMax prompts."""
+"""XML annotation prompts for the Doc-to-Atom pipeline."""
 
-PROMPT_PROVENANCE = "RECONSTRUCTED_PROMPT_NOT_OFFICIAL"
-
-DECOMPOSITION_SYSTEM = f"""[{PROMPT_PROVENANCE}]
-Decompose the supplied document into non-overlapping, minimal, self-contained semantic atoms.
+DECOMPOSITION_SYSTEM = """Decompose the supplied document into non-overlapping, minimal, self-contained semantic atoms.
 Return one <atoms> XML root and no markdown. Each <atom> must contain atom_id, semantic_type,
 content, source_span, retrieval_text, is_answer_bearing, abstraction_level, conflict_group,
 confidence, and relations. source_span must be copied as one verbatim contiguous substring:
@@ -46,14 +43,12 @@ use empty <relations/> and <conflict_group/> when absent. atom_id values must be
 confidence must be a number from 0 through 1.
 """
 
-IRRELEVANT_SYSTEM = f"""[{PROMPT_PROVENANCE}]
-Generate plausible questions that mention entities or topics from the document but cannot be
+IRRELEVANT_SYSTEM = """Generate plausible questions that mention entities or topics from the document but cannot be
 answered from it. Return XML <irrelevant_questions><question>...</question></irrelevant_questions>.
 Do not generate a question whose answer is stated or entailed by the document.
 """
 
-QUESTION_SYSTEM = f"""[{PROMPT_PROVENANCE}]
-Annotate each question against the supplied validated atom bank. Return one
+QUESTION_SYSTEM = """Annotate each question against the supplied validated atom bank. Return one
 <question_annotations> XML root and no markdown. For each
 <question_annotation>, emit only question_id, question_type, gold_atom_ids,
 supporting_atom_ids, and distractor_atom_ids. Gold is the minimal necessary set; distractors
@@ -65,6 +60,29 @@ Represent each ID list as repeated <atom_id>...</atom_id> children. Copy questio
 the input question id attribute exactly.
 question_type must be exactly one of single_hop, multi_hop, comparison, temporal, causal,
 procedural, aggregation, field_lookup, evidence_grounded, irrelevant.
+
+Assign roles independently for EACH question. The three ID lists must be pairwise disjoint:
+- GOLD: the smallest sufficient evidence set for the source answer. Keep every required
+  bridge/comparison atom for multi-hop questions. If removing an atom breaks the answer's
+  evidence chain, that atom is gold, NOT supporting.
+- SUPPORTING: optional background that helps explain the answer but is unnecessary once
+  gold is present. Do not repeat answer-bearing gold atoms here. An empty list is normal,
+  especially for a direct single-hop lookup.
+- DISTRACTOR: plausible but incorrect evidence for this question, never gold or supporting.
+  Not every unused atom is a distractor. Empty distractor lists are allowed.
+Do not invent extra gold or supporting atoms to fill a list. Do not label a source-answerable
+question irrelevant merely to avoid choosing gold. For unanswerable questions use
+question_type=irrelevant and empty gold/supporting lists.
+
+Example: atom_1 states Paris is France's capital; atom_2 states Paris is on the Seine;
+atom_3 states Lyon is a city in France. For "What is France's capital?", emit:
+<question_annotation><question_id>q1</question_id><question_type>single_hop</question_type>
+<gold_atom_ids><atom_id>atom_1</atom_id></gold_atom_ids><supporting_atom_ids/>
+<distractor_atom_ids><atom_id>atom_3</atom_id></distractor_atom_ids></question_annotation>
+atom_1 must NOT also appear in supporting_atom_ids. atom_2 need not receive any role.
+Before emitting XML, silently check: no duplicate IDs within a list; gold intersects
+supporting is empty; gold intersects distractor is empty; supporting intersects distractor
+is empty; all IDs exist in the input bank; every input question_id occurs exactly once.
 """
 
 

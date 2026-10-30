@@ -8,7 +8,7 @@
    `REPRODUCTION_NOTES.md`, configurations, packaging, and an independent Git
    root. The upstream repository had no code to port.
 2. **Atomization — complete on the real subset with a declared deviation.** Added
-   schemas, reconstructed prompts, MiniMax/OpenAI providers, tolerant parsing,
+   schemas, XML annotation prompts, MiniMax/OpenAI providers, tolerant parsing,
    deterministic cross-field validation, and CLI. OpenAI
    `gpt-4.1-mini-2025-04-14` replaced MiniMax-M2.5 and is recorded in every
    record's provenance. Output: 3 documents, 28 atoms, 18 questions, zero invalid

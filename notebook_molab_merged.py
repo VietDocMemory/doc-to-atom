@@ -100,6 +100,12 @@ def _(mo):
         options={"Offline": "offline", "Online (W&B)": "online", "Disabled": "disabled"},
         value="Offline", label="Weights & Biases")
     run_tag = mo.ui.text(value="exp01", label="Run ID (letters, numbers, _ or -)")
+    annotation_budget = mo.ui.dropdown(
+        options={"8192 (current budget)": 8192, "16384": 16384, "32768": 32768},
+        value="8192 (current budget)", label="Annotation tokens (thinking + XML)")
+    annotation_reasoning = mo.ui.dropdown(
+        options=["low", "medium", "high", "xhigh", "max"],
+        value="low", label="MiniMax thinking depth")
     prepare_button = mo.ui.run_button(label="2a. Prepare/Resume atomization (API may cost)")
     validate_button = mo.ui.run_button(label="2b. Validate existing raw + atoms")
     config_button = mo.ui.run_button(label="3. Save/verify experiment config")
@@ -114,6 +120,12 @@ def _(mo):
               "The CLI runs in the repository's uv environment."),
         setup_button,
         mo.hstack([dataset_choice, mode_choice, tracking_choice, run_tag]),
+        mo.hstack([annotation_budget, annotation_reasoning]),
+        mo.md("**Annotation:** defaults remain 8192 tokens / max thinking. "
+              "If MiniMax returns `length`, inspect the raw-response sidecar, then "
+              "consider 16384 tokens / medium thinking before clicking 2a again. "
+              "A larger budget may cost more; retries are never automatic. "
+              "Changed settings affect only new API calls, not cached records."),
         mo.hstack([prepare_button, validate_button]),
         mo.hstack([config_button, preflight_button]),
         mo.hstack([train_button, resume_button]),
@@ -124,6 +136,8 @@ def _(mo):
               "Keep the same profile, run ID, dataset and tracking mode when resuming."),
     ])
     return (
+        annotation_budget,
+        annotation_reasoning,
         config_button,
         dataset_choice,
         evaluate_button,
@@ -214,7 +228,20 @@ def _(REPO_DIR, atoms_path, raw_path, run_cmd):
 
 
 @app.cell
+def _(annotation_budget, annotation_reasoning, atoms_path, raw_path):
+    def atomization_command():
+        return ["uv", "run", "doc2atom-atomize",
+                "--input", str(raw_path), "--output", str(atoms_path),
+                "--max-completion-tokens", str(annotation_budget.value),
+                "--reasoning-effort", annotation_reasoning.value,
+                "--resume", "--retry-invalid"]
+
+    return (atomization_command,)
+
+
+@app.cell
 def _(
+    atomization_command,
     atoms_path,
     ensure_repo_ready,
     prepare_button,
@@ -241,10 +268,8 @@ def _(
                 print("Cached atomization incomplete or invalid; retrying with --resume --retry-invalid")
         if not complete:
             run_cmd(["uv", "run", "python", "-c",
-                     "import os; assert os.getenv('MINIMAX_API_KEY'), 'Atomization requires MINIMAX_API_KEY'"])
-            run_cmd(["uv", "run", "doc2atom-atomize",
-                     "--input", str(raw_path), "--output", str(atoms_path),
-                     "--resume", "--retry-invalid"])
+                     "from doc_to_atom.atomization.client import MiniMaxConfig; MiniMaxConfig.from_env()"])
+            run_cmd(atomization_command())
         else:
             print("Cached atomization fully validated; no paid API call needed")
         validate_pair()

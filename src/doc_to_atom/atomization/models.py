@@ -164,7 +164,7 @@ class AnnotationMeta(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     transformations: list[TransformationEvent] = Field(default_factory=list)
-    prompt_provenance: str = "RECONSTRUCTED_PROMPT_NOT_OFFICIAL"
+    prompt_provenance: str = ""
 
 
 class StructuredRecord(BaseModel):

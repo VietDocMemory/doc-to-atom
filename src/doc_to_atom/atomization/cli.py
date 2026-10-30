@@ -11,7 +11,7 @@ from pathlib import Path
 
 from doc_to_atom.config import load_project_env
 
-from .client import DEFAULT_MINIMAX_MODEL, MiniMaxAtomizer, MiniMaxConfig
+from .client import DEFAULT_MINIMAX_MODEL, DEFAULT_REASONING_EFFORT, MiniMaxAtomizer, MiniMaxConfig
 from .models import QuestionAnnotation, StructuredRecord
 from .provenance import write_raw_response_jsonl
 
@@ -63,7 +63,7 @@ def main() -> None:
     )
     parser.add_argument("--model", default=DEFAULT_MINIMAX_MODEL)
     parser.add_argument("--max-completion-tokens", type=int, default=8192)
-    parser.add_argument("--reasoning-effort", choices=["low", "medium", "high", "xhigh", "max"], default="max")
+    parser.add_argument("--reasoning-effort", choices=["low", "medium", "high", "xhigh", "max"], default=DEFAULT_REASONING_EFFORT)
     args = parser.parse_args()
     print(json.dumps(atomize_file(
         args.input, args.output, provider=args.provider, resume=args.resume,
@@ -78,7 +78,7 @@ def atomize_file(
     resume: bool = True, retry_invalid: bool = False,
     raw_responses: str | Path | None = None,
     model: str = DEFAULT_MINIMAX_MODEL, max_completion_tokens: int = 8192,
-    reasoning_effort: str = "max",
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
 ) -> dict:
     """Atomize source JSONL in-process; resume appends only uncached record IDs."""
     if provider != "minimax":

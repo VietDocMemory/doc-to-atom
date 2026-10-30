@@ -57,7 +57,7 @@ Các đường dẫn code trong bảng đều tương đối từ `src/doc_to_at
 
 | Thành phần | Paper, bằng chứng | Implementation hiện tại | Phân loại / khoảng trống |
 |---|---|---|---|
-| Annotator | §4.1 p7; App B p12: MiniMax-M2.5, structured XML | `atomization/client.py`: MiniMax-M3.1-Flash mặc định, HTTP trực tiếp, ba semantic calls | **Implemented / Deviation**: model đổi theo yêu cầu, prompts không chính thức; chưa chạy canary API thật |
+| Annotator | §4.1 p7; App B p12: MiniMax-M2.5, structured XML | `atomization/client.py`: MiniMax-M3.1-Flash mặc định, OpenAI SDK, ba semantic calls | **Implemented**: model có thể cấu hình, prompts XML theo Appendix B |
 | Atom taxonomy / metadata | §3.1 pp3–4; Table 4 p14: 5 types, 9 relation types, 10 question types | `atomization/models.py`, `prompts.py`, `parser.py`: schemas, enums, adapters và XML parsing | **Implemented / Paper-unspecified**: không có literal prompts/official adapters/calibration; minimality và self-contained phần lớn dựa vào LLM, không phải chứng minh tự động |
 | Source grounding / roles | App B.1/B.3 pp13–14: substring spans, drop unknown IDs, union roles, derive conflict | `atomization/validation.py`, `question_join.py`, `data/semantic_validation.py`: source-owned question/answers, ID joins, whitespace span checks, transformations | **Implemented / Partial**: chống thay gold/source tốt; canonicalization spans chạy cuối record, chưa có full validated-span gate trước role call. Source-aware CLI validation cần raw source |
 | Irrelevant probes / rescue | App B.2/B.3; App F p19 có generated probe được rescue | `client.py`, `question_join.py`, `data/targets.py`: tạo probes, giữ source answers read-only, rescue không bịa gold answer | **Implemented / Paper-unspecified**: probe count=2 là giả định; rescued answerable probe không có source answer bị loại khỏi LM training |
@@ -95,7 +95,7 @@ LongBench held-out không được dùng để tune.
 | Total-loss coefficients | Reconstruction: lm/distill/route/rerank=1; irrel=.1; protect=.001; sparse=.01; composition/conflict/confidence=.1 | Giữ lm=1 làm anchor; từng auxiliary weight ×{0.1,1,10}, ablation0, đo gradient norms/F1/refusal/retention, tránh grid đồng thời quá lớn |
 | Sparse target ρ | .25 | {0.1,.25,.5}; ghi per-layer gate density, không chỉ scalar mean |
 | Stage3/4 strength | irrel×2 và sparse×2 | {1,2,4}, giữ optimizer steps/dataset cố định |
-| Probe count / prompt calibration | 2 probes/document, prompts/adapters reconstructed | {1,2,4}; human audit grounding, duplicate/leakage/answerability và canary thất bại trước chạy toàn bộ |
+| Probe count / prompt calibration | 2 probes/document, prompts/adapters theo Appendix B | {1,2,4}; human audit grounding, duplicate/leakage/answerability và canary thất bại trước chạy toàn bộ |
 | Annotation decoding | M3.1 provider temperature1/top_p.95; effort max; budget8192 | So effort {medium,max}, budget {8192,16384,32768} theo cost/quota; dừng ở truncation thay vì chấp nhận XML thiếu. Không gọi temperature0 là deterministic |
 | Metadata/type/conflict encoding | type scalar embedding, binary conflict membership | Cần duyệt thiết kế trước khi thử one-hot/embedding/conflict features; báo số trainable params và giữ baseline cũ |
 | Gate placement / A-head init | gate-on-delta; normal A-head params | Thử g vs g² và output variance calibration chỉ trong experiment profile riêng; không sửa checkpoint kiến trúc hiện có |

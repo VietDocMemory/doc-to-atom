@@ -110,3 +110,18 @@ def test_embedded_scripts_compile_and_validation_receives_source_paths():
     assert validate_pair()
     assert len(calls) == 1
     assert calls[0][-2:] == [str(NOTEBOOK), str(NOTEBOOK)]
+
+
+@pytest.mark.parametrize("budget,reasoning", [(8192, "max"), (16384, "medium"), (32768, "low")])
+def test_annotation_command_uses_explicit_controls_without_running_api(budget, reasoning, tmp_path):
+    raw, atoms = tmp_path / "raw.jsonl", tmp_path / "atoms.jsonl"
+    (command,) = run_cell(
+        "atomization_command", annotation_budget=SimpleNamespace(value=budget),
+        annotation_reasoning=SimpleNamespace(value=reasoning), atoms_path=atoms, raw_path=raw,
+    )
+    assert command() == [
+        "uv", "run", "doc2atom-atomize", "--input", str(raw), "--output", str(atoms),
+        "--max-completion-tokens", str(budget), "--reasoning-effort", reasoning,
+        "--resume", "--retry-invalid",
+    ]
+    assert not list(tmp_path.iterdir())

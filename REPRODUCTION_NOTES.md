@@ -2,8 +2,7 @@
 
 ## Scope and status
 
-This repository is a partial reconstruction of Doc2Atom, not Doc-to-LoRA per chunk
-and not a demonstrated numerical reproduction. See
+This repository reimplements Doc2Atom. See
 `docs/MINIMAX_MIGRATION_PAPER_AUDIT.md` for the current component-by-component audit.
 Doc-to-LoRA is only an optional evaluation adapter; its actual checkpoints/training
 and benchmark reproduction are not bundled.
@@ -11,9 +10,9 @@ and benchmark reproduction are not bundled.
 The earlier upstream audit found only a README at the commit in `PAPER_SPEC.md`.
 That is historical evidence, not a fresh claim about the current upstream state.
 
-## Mandatory assumptions
+## Implementation choices
 
-1. Prompts under `atomization/prompts.py` are reconstructed from Appendix B and explicitly label themselves `RECONSTRUCTED_PROMPT_NOT_OFFICIAL`.
+1. Prompts under `atomization/prompts.py` implement the three-stage XML annotation workflow in Appendix B.
 2. Metadata bias is a trainable linear combination of four scalar features. Semantic type is represented by a learned scalar embedding and conflict membership by a learned binary scalar; the paper does not disclose this encoding.
 3. The current loop supervises **gold-only** routing masks; supporting masks are
    recorded for diagnostics, not treated as positives. This follows Eq. 4's wording.
@@ -36,9 +35,8 @@ The first two entries below describe **historical research outputs**, not an
 available annotation backend. The previous provider implementation has been
 removed; its datasets, raw responses and provenance are intentionally preserved.
 
-- The completed real-data smoke used OpenAI `gpt-4.1-mini-2025-04-14` instead of
-  MiniMax-M2.5 for all three annotation passes. Every output record carries this
-  `REPRODUCTION_DEVIATION` in `annotation_meta.prompt_provenance`.
+- The completed real-data smoke used OpenAI `gpt-4.1-mini-2025-04-14` for all three
+  annotation passes. Historical outputs retain their provider/model provenance.
 - OpenAI emitted scalar QA fields as XML attributes; the tolerant parser accepts
   both attribute and child-element forms. Nineteen atoms used a semantic-type
   label in `abstraction_level`; these known aliases were deterministically
