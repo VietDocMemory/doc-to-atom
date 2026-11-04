@@ -14,6 +14,7 @@ from doc_to_atom.config import load_project_env
 from .client import DEFAULT_MINIMAX_MODEL, DEFAULT_REASONING_EFFORT, MiniMaxAtomizer, MiniMaxConfig
 from .models import QuestionAnnotation, StructuredRecord
 from .provenance import write_raw_response_jsonl
+from .validation import source_span_matches
 
 LOGGER = logging.getLogger(__name__)
 
@@ -101,7 +102,10 @@ def atomize_file(
                 if not line.strip():
                     continue
                 record = StructuredRecord.model_validate_json(line)
-                if retry_invalid and any(not atom.span_valid for atom in record.atoms):
+                if retry_invalid and any(
+                    not atom.span_valid or not source_span_matches(atom.source_span, record.context)
+                    for atom in record.atoms
+                ):
                     removed_invalid = True
                     continue
                 cached_ids.add(record.record_id)
@@ -129,6 +133,7 @@ def atomize_file(
                     temporary.unlink(missing_ok=True)
         LOGGER.warning("Cached records are reused unchanged, including historical provider/model provenance")
     failed = 0
+    invalid_span_records: list[str] = []
     mode = "a" if resume else "x"
     with (
         Path(input_path).open(encoding="utf-8") as source,
@@ -165,6 +170,13 @@ def atomize_file(
             )
             if record is not None:
                 sink.write(record.model_dump_json() + "\n")
+                invalid_ids = [atom.atom_id for atom in record.atoms
+                               if not atom.span_valid
+                               or not source_span_matches(atom.source_span, record.context)]
+                if invalid_ids:
+                    invalid_span_records.append(f"{record_id}/{'/'.join(invalid_ids)}")
+                    LOGGER.error("record %s retained for inspection with invalid source spans: %s",
+                                 record_id, ", ".join(invalid_ids))
             else:
                 failed += 1
                 LOGGER.error(
@@ -174,5 +186,11 @@ def atomize_file(
                 )
     if failed:
         raise RuntimeError(f"atomization discarded {failed} record(s); output is incomplete")
+    if invalid_span_records:
+        raise RuntimeError(
+            f"atomization retained {len(invalid_span_records)} record(s) with invalid source spans: "
+            f"{', '.join(invalid_span_records)}. Output and raw responses are preserved; "
+            "inspect them before any explicit retry. No automatic retry was made."
+        )
     return {"records_cached": len(cached_ids), "records_failed": failed,
             "output": str(output), "provider": provider}

@@ -110,6 +110,8 @@ def test_embedded_scripts_compile_and_validation_receives_source_paths():
     assert validate_pair()
     assert len(calls) == 1
     assert calls[0][-2:] == [str(NOTEBOOK), str(NOTEBOOK)]
+    # Print the report (including bad record/atom IDs) before failing the gate.
+    assert "reject_span_mismatch=False" in calls[0][4]
 
 
 @pytest.mark.parametrize("budget,reasoning", [(8192, "max"), (16384, "medium"), (32768, "low")])

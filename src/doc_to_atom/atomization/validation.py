@@ -10,6 +10,13 @@ def _normalise_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def source_span_matches(span: str, context: str, fuzzy_whitespace: bool = True) -> bool:
+    """Check the actual span, not a potentially stale serialized span_valid flag."""
+    if fuzzy_whitespace:
+        span, context = _normalise_ws(span), _normalise_ws(context)
+    return bool(span) and span in context
+
+
 def _record_transformation(
     record: StructuredRecord,
     *,
@@ -94,13 +101,11 @@ def canonicalize_record(
     record: StructuredRecord, fuzzy_whitespace: bool = True
 ) -> StructuredRecord:
     """Apply deterministic repairs while retaining structured provenance for every mutation."""
-    context_match = _normalise_ws(record.context) if fuzzy_whitespace else record.context
     ids = {atom.atom_id for atom in record.atoms}
     conflict_by_id = {atom.atom_id: atom.conflict_group for atom in record.atoms}
 
     for atom in record.atoms:
-        span = _normalise_ws(atom.source_span) if fuzzy_whitespace else atom.source_span
-        span_valid = span in context_match
+        span_valid = source_span_matches(atom.source_span, record.context, fuzzy_whitespace)
         if atom.span_valid != span_valid:
             _record_transformation(
                 record,

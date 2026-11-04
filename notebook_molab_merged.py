@@ -209,7 +209,7 @@ def _(REPO_DIR, atoms_path, raw_path, run_cmd):
     from doc_to_atom.data.io import validate_jsonl
     from doc_to_atom.data.semantic_validation import load_source_records
     raw,atoms=sys.argv[1:3]
-    stats=validate_jsonl(atoms,source_path=raw,reject_span_mismatch=True)
+    stats=validate_jsonl(atoms,source_path=raw,reject_span_mismatch=False)
     print(json.dumps(stats,ensure_ascii=False,indent=2))
     if stats.get("errors",0) or stats.get("invalid_spans",0) or stats.get("source_answer_mismatches",0) or stats.get("parse_errors",0):
         raise SystemExit("Source contract validation failed")
@@ -265,7 +265,8 @@ def _(
             try:
                 complete = validate_pair()
             except subprocess.CalledProcessError:
-                print("Cached atomization incomplete or invalid; retrying with --resume --retry-invalid")
+                print("Cached atomization incomplete or invalid; retrying once with --resume --retry-invalid. "
+                      "Generation may still contain invalid spans; inspect reported record/atom IDs if it fails.")
         if not complete:
             run_cmd(["uv", "run", "python", "-c",
                      "from doc_to_atom.atomization.client import MiniMaxConfig; MiniMaxConfig.from_env()"])
