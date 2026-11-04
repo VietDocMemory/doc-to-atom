@@ -184,6 +184,92 @@ def test_legacy_enrichment_rejects_incomplete_or_mutated_questions(mutation):
         cli.enrich_rows(rows, [record])
 
 
+def _prediction_rows(records):
+    return [{"record_id": record.record_id, "split": record.split,
+             "question_id": qa.question_id, "question": qa.question,
+             "gold": list(qa.answers), "is_irrelevant": qa.is_irrelevant,
+             "prediction": "unanswerable" if qa.is_irrelevant else "Copper statue",
+             "ranked_atom_ids": ["a1"]}
+            for record in records for qa in record.qa_pairs]
+
+
+def test_enrichment_allows_record_local_probe_ids_and_preserves_predictions():
+    first = _record()
+    second = _record().model_copy(update={"record_id": "r2"}, deep=True)
+    second.qa_pairs[1] = second.qa_pairs[1].model_copy(update={"question": "When was it built?"})
+    rows = _prediction_rows([first, second])
+    original_predictions = [row["prediction"] for row in rows]
+    cli.enrich_rows(rows, [first, second])
+    assert len(rows) == 4
+    assert [row["prediction"] for row in rows] == original_predictions
+    assert cli.score_rows(rows)["irrelevant_count"] == 2
+
+
+def test_enrichment_missing_probe_in_one_record_is_not_covered_by_another():
+    records = [_record(), _record().model_copy(update={"record_id": "r2"}, deep=True)]
+    rows = _prediction_rows(records)
+    rows.pop()
+    with pytest.raises(ValueError, match="missing prediction question identities"):
+        cli.enrich_rows(rows, records)
+
+
+def test_enrichment_rejects_duplicate_local_question_identity():
+    records = [_record(), _record().model_copy(update={"record_id": "r2"}, deep=True)]
+    rows = _prediction_rows(records)
+    rows.append(dict(rows[1]))
+    with pytest.raises(ValueError, match="duplicate prediction question identity"):
+        cli.enrich_rows(rows, records)
+
+
+def test_enrichment_distinguishes_same_record_and_question_ids_across_splits():
+    records = [_record(), _record().model_copy(update={"split": "test"}, deep=True)]
+    rows = _prediction_rows(records)
+    cli.enrich_rows(rows, records)
+    assert len(rows) == 4
+
+
+def test_enrichment_still_rejects_duplicate_source_identity_within_record():
+    record = _record()
+    record.qa_pairs.append(record.qa_pairs[1].model_copy(deep=True))
+    with pytest.raises(ValueError, match="duplicate source question identity"):
+        cli.enrich_rows(_prediction_rows([record]), [record])
+
+
+def test_source_join_identifies_rescued_generated_probe_without_inventing_gold():
+    record = _record()
+    record.qa_pairs[1].is_irrelevant = False
+    record.qa_pairs[1].question_type = "single_hop"
+    record.qa_pairs[1].gold_atom_ids = ["a1"]
+    record.qa_pairs[1].relevant_atom_ids = ["a1"]
+    rows = _prediction_rows([record])
+    cli.enrich_rows(rows, [record])
+    summary = cli.score_rows(rows)
+    assert summary["count"] == 2
+    assert summary["scored_count"] == 1
+    assert summary["answerable_count"] == 1
+    assert summary["excluded_no_reference_count"] == 1
+    assert summary["excluded_no_reference_questions"] == [{
+        "split": "validation", "record_id": "r1", "question_id": "generated_irrelevant_0",
+    }]
+    assert rows[1]["gold"] == []
+    assert rows[1]["is_irrelevant"] is False
+    assert summary["f1"] == 1.0
+
+
+def test_answerable_without_verified_generated_provenance_still_fails():
+    with pytest.raises(ValueError, match="lacks source gold"):
+        cli.score_rows([{"question_id": "q1", "prediction": "Paris", "gold": [],
+                         "is_irrelevant": False, "gold_atom_ids": ["a1"]}])
+
+
+def test_source_join_rejects_forged_generated_provenance():
+    record = _record()
+    rows = _prediction_rows([record])
+    rows[0]["is_generated_irrelevant"] = True
+    with pytest.raises(ValueError, match="source is_generated_irrelevant differs"):
+        cli.enrich_rows(rows, [record])
+
+
 def test_generate_rows_covers_answerable_and_irrelevant_with_source_gold():
     class FakeEngine:
         def __init__(self, *args):

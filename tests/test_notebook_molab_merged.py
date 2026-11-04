@@ -59,6 +59,23 @@ def test_command_dedents_scripts_and_isolates_project_environment(tmp_path, monk
     assert not any(name in seen["env"] for name in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_PYTHON"))
 
 
+def test_captured_command_failure_displays_original_stderr(tmp_path, monkeypatch, capsys):
+    uv = tmp_path / "uv"
+    uv.touch()
+
+    def failed(cmd, **kwargs):
+        raise subprocess.CalledProcessError(1, cmd, stderr="ValueError: duplicate identity")
+
+    monkeypatch.setattr(subprocess, "run", failed)
+    run_cmd, _ = run_cell(
+        "run_cmd", NOTEBOOK_DIR=tmp_path, Path=Path, REPO_DIR=tmp_path,
+        UV=str(uv), hashlib=hashlib, os=os,
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        run_cmd(["uv", "run", "doc2atom-evaluate"], capture=True)
+    assert "ValueError: duplicate identity" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("mode", ["smoke", "standard", "four_stage"])
 @pytest.mark.parametrize("tracking", ["disabled", "offline", "online"])
 def test_config_builder_round_trip_and_reuse(mode, tracking, tmp_path, monkeypatch):

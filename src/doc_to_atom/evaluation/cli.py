@@ -50,27 +50,29 @@ def routing_scores(
 
 
 def enrich_rows(rows: list[dict], records: list) -> None:
-    """Join legacy predictions to validated atomized questions without changing source gold."""
+    """Join by (split, record_id, question_id); probe IDs are local to each record."""
     if not rows:
         raise ValueError("cannot join empty prediction rows")
     splits = {row.get("split") for row in rows}
-    source: dict[str, tuple] = {}
+    source: dict[tuple, tuple] = {}
     for record in records:
         if record.split not in splits:
             continue
         for qa in record.qa_pairs:
-            if qa.question_id in source:
-                raise ValueError(f"duplicate source question_id: {qa.question_id}")
-            source[qa.question_id] = (record, qa)
-    seen: set[str] = set()
+            key = (record.split, record.record_id, qa.question_id)
+            if key in source:
+                raise ValueError(f"duplicate source question identity: {key}")
+            source[key] = (record, qa)
+    seen: set[tuple] = set()
     for row in rows:
         question_id = row.get("question_id")
-        if question_id in seen:
-            raise ValueError(f"duplicate prediction question_id: {question_id}")
-        seen.add(question_id)
-        if question_id not in source:
-            raise ValueError(f"unknown prediction question_id: {question_id}")
-        record, qa = source[question_id]
+        key = (row.get("split"), row.get("record_id"), question_id)
+        if key in seen:
+            raise ValueError(f"duplicate prediction question identity: {key}")
+        seen.add(key)
+        if key not in source:
+            raise ValueError(f"unknown prediction question identity: {key}")
+        record, qa = source[key]
         if (
             row.get("record_id") != record.record_id
             or row.get("split") != record.split
@@ -79,6 +81,10 @@ def enrich_rows(rows: list[dict], records: list) -> None:
             or row.get("is_irrelevant") is not qa.is_irrelevant
         ):
             raise ValueError(f"source fields differ for question_id: {question_id}")
+        for field in ("is_generated_irrelevant", "answer_provenance"):
+            if field in row and row[field] != getattr(qa, field):
+                raise ValueError(f"source {field} differs for question identity: {key}")
+            row[field] = getattr(qa, field)
         row["gold_atom_ids"] = list(qa.gold_atom_ids)
         row["atom_count"] = len(record.atoms)
         if "ranked_atom_ids" in row:
@@ -88,11 +94,12 @@ def enrich_rows(rows: list[dict], records: list) -> None:
             row["candidate_count"] = len(record.atoms)
     missing = source.keys() - seen
     if missing:
-        raise ValueError(f"missing prediction question_id: {sorted(missing)}")
+        raise ValueError(f"missing prediction question identities: {sorted(map(str, missing))}")
 
 
 def score_rows(rows: list[dict], *, refusal_literal: str = "unanswerable") -> dict:
     answerable, irrelevant, latencies, adapter_norms = [], [], [], []
+    excluded_no_reference = []
     recall_values = {k: [] for k in (1, 4, 8)}
     saturation_values = {k: [] for k in (1, 4, 8)}
     ranks = []
@@ -112,6 +119,17 @@ def score_rows(rows: list[dict], *, refusal_literal: str = "unanswerable") -> di
             gold = row["gold"]
             references = gold if isinstance(gold, list) else [gold]
             if not references:
+                # A generated probe may be rescued as answerable by annotation,
+                # but has no authoritative answer text. Never invent gold, relabel
+                # it irrelevant, or silently score its prediction against empty gold.
+                if (row.get("is_generated_irrelevant") is True
+                        and row.get("answer_provenance") == "generated_irrelevant"
+                        and row.get("gold_atom_ids")):
+                    row["scoring_exclusion_reason"] = "rescued_generated_probe_without_source_answer"
+                    excluded_no_reference.append({
+                        key: row.get(key) for key in ("split", "record_id", "question_id")
+                    })
+                    continue
                 raise ValueError(f"answerable prediction lacks source gold: {row.get('question_id')}")
             row["f1"] = max(word_f1(prediction, answer) for answer in references)
             row["raw_f1"] = row["f1"]
@@ -154,6 +172,9 @@ def score_rows(rows: list[dict], *, refusal_literal: str = "unanswerable") -> di
     return {
         "scoring_protocol": "squad_v1_multiref",
         "count": len(rows),
+        "scored_count": len(answerable) + len(irrelevant),
+        "excluded_no_reference_count": len(excluded_no_reference),
+        "excluded_no_reference_questions": excluded_no_reference,
         "answerable_count": len(answerable),
         "irrelevant_count": len(irrelevant),
         "f1": mean([row["f1"] for row in answerable]),
@@ -217,6 +238,8 @@ def generate_rows(
                 "gold": list(qa.answers),
                 "gold_atom_ids": list(qa.gold_atom_ids),
                 "is_irrelevant": qa.is_irrelevant,
+                "is_generated_irrelevant": qa.is_generated_irrelevant,
+                "answer_provenance": qa.answer_provenance,
                 "atom_count": len(record.atoms),
                 "candidate_count": len(record.atoms),
                 "selected_atom_ids": result["selected_atom_ids"],

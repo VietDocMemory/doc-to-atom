@@ -73,8 +73,17 @@ def _(NOTEBOOK_DIR, Path, REPO_DIR, UV, hashlib, os):
             env.pop(key, None)
         # Do not print environment variables or secrets.
         print("[RUNNING]", " ".join(cmd))
-        completed = subprocess.run(cmd, cwd=cwd or REPO_DIR, env=env, check=True,
-                                   text=True, capture_output=capture)
+        try:
+            completed = subprocess.run(cmd, cwd=cwd or REPO_DIR, env=env, check=True,
+                                       text=True, capture_output=capture)
+        except subprocess.CalledProcessError as exc:
+            if capture:
+                # Scoring failures otherwise hide the actual Python error from Molab.
+                if exc.stderr:
+                    print(exc.stderr)
+                elif exc.stdout:
+                    print(exc.stdout)
+            raise
         return completed
 
     def sha256_file(path):
