@@ -76,7 +76,7 @@ def test_captured_command_failure_displays_original_stderr(tmp_path, monkeypatch
     assert "ValueError: duplicate identity" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("mode", ["smoke", "standard", "four_stage"])
+@pytest.mark.parametrize("mode", ["smoke", "standard", "four_stage", "four_stage_aligned"])
 @pytest.mark.parametrize("tracking", ["disabled", "offline", "online"])
 def test_config_builder_round_trip_and_reuse(mode, tracking, tmp_path, monkeypatch):
     destination = tmp_path / "notebook.yaml"
@@ -101,9 +101,14 @@ def test_config_builder_round_trip_and_reuse(mode, tracking, tmp_path, monkeypat
         assert config["training"]["max_steps"] == 1
         assert not config["training"]["stage4_only_best"]
         assert config["training"]["validation_every_steps"] == 1
-    if mode == "four_stage":
+    if mode in {"four_stage", "four_stage_aligned"}:
         assert config["training"]["curriculum_boundaries"] == [200, 400, 600]
         assert config["training"]["max_steps"] == 800
+    if mode == "four_stage_aligned":
+        assert config["training"]["objective_protocol"] == "aligned_qa_v2"
+        assert config["training"]["question_loss_reduction"] == "group_balanced"
+        assert config["training"]["early_stopping_metric"] == "answerable.losses.lm"
+        assert config["training"]["warmup_steps"] == 40
     config["training"]["max_steps"] = 999
     # JSON is valid YAML; a conflicting existing run must never be overwritten.
     destination.write_text(json.dumps(config), encoding="utf-8")

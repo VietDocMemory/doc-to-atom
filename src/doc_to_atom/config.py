@@ -180,6 +180,10 @@ def validate_config(config: dict[str, Any], *, require_runnable: bool = False) -
         config.get("deviations", []), kind="deviation", required_fields=DEVIATION_FIELDS
     )
     training = config.get("training", {})
+    if training.get("objective_protocol", "legacy_v1") not in {"legacy_v1", "aligned_qa_v2"}:
+        raise ConfigError("training.objective_protocol must be legacy_v1 or aligned_qa_v2")
+    if training.get("question_loss_reduction", "question_mean") not in {"question_mean", "group_balanced"}:
+        raise ConfigError("training.question_loss_reduction must be question_mean or group_balanced")
     runtime = config.get("runtime", {})
     if training.get("checkpoint_retention", "best_last") != "best_last":
         raise ConfigError("training.checkpoint_retention must be best_last")

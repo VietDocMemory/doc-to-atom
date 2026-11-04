@@ -103,9 +103,10 @@ def _(mo):
         value="Existing SQuAD (squad_molab)", label="Dataset")
     mode_choice = mo.ui.dropdown(
         options={"Smoke (1 optimizer step)": "smoke",
-                 "Standard single-GPU config": "standard",
-                 "4-stage diagnostic (800 steps)": "four_stage"},
-        value="4-stage diagnostic (800 steps)", label="Training profile")
+                  "Standard single-GPU config": "standard",
+                  "4-stage aligned QA v2 (NEW run)": "four_stage_aligned",
+                  "4-stage diagnostic (800 steps)": "four_stage"},
+        value="4-stage aligned QA v2 (NEW run)", label="Training profile")
     tracking_choice = mo.ui.dropdown(
         options={"Offline": "offline", "Online (W&B)": "online", "Disabled": "disabled"},
         value="Offline", label="Weights & Biases")
@@ -145,7 +146,10 @@ def _(mo):
         mo.md("**4-stage profile:** 200/400/600 boundaries, 800 steps total, "
               "Top-K 1 → 4 → 8 → 8. This is a shortened diagnostic, NOT the paper schedule. "
               "With `stage4_only_best`, `best.json` appears only after stage-4 validation. "
-              "Keep the same profile, run ID, dataset and tracking mode when resuming."),
+               "Keep the same profile, run ID, dataset and tracking mode when resuming."),
+        mo.md("**Aligned QA v2:** shared train/generation prompts, answer-line termination, "
+              "token-mean KL and group-balanced source/refusal losses. Use a NEW run. "
+              "To resume an old exp01 checkpoint, select its original 4-stage diagnostic profile."),
     ])
     return (
         annotation_budget,
@@ -307,7 +311,7 @@ def _(
 ):
     def prepare_config():
         ensure_repo_ready()
-        if mode_choice.value == "four_stage":
+        if mode_choice.value in {"four_stage", "four_stage_aligned"}:
             base = REPO_DIR / "configs/reconstruction/molab_blackwell_1gpu.yaml"
         else:
             base = REPO_DIR / "configs/reconstruction/molab_single_gpu.yaml"
@@ -320,6 +324,10 @@ def _(
     config=load_and_resolve_config(base,require_runnable=True)
     config["runtime"]["wandb_mode"]=tracking
     config["runtime"]["checkpoint_upload"]="best_weights" if tracking=="online" else "none"
+    if mode=="four_stage_aligned":
+        config=load_and_resolve_config(str(Path(base).parent.parent / "experiments/molab_aligned_qa_v2.yaml"),require_runnable=True)
+        config["runtime"]["wandb_mode"]=tracking
+        config["runtime"]["checkpoint_upload"]="best_weights" if tracking=="online" else "none"
     if mode=="smoke":
         config["profile"]={"name":"molab-unified-smoke","family":"experiments"}
         config["training"]["max_steps"]=1

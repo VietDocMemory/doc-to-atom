@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--max-steps", type=int, help="Diagnostic optimizer-step limit")
     parser.add_argument("--max-questions", type=int, help="Diagnostic questions per record")
+    parser.add_argument("--full-report", action="store_true", help="Print all teacher-forced examples (full JSON is always saved)")
     parser.add_argument(
         "--wandb-mode", choices=["online", "offline", "disabled"], default=None
     )
@@ -129,11 +130,28 @@ def execute(
         tracker.finish()
 
 
+def console_report(result: dict, *, full: bool = False) -> dict:
+    if full or not result.get("training", {}).get("last_validation"):
+        return result
+    training = dict(result["training"])
+    validation = {}
+    for name, group in training["last_validation"].items():
+        brief = dict(group)
+        examples = brief.pop("examples", [])
+        brief["examples_saved_in_report"] = len(examples)
+        brief["prediction_mode"] = "teacher_forced_token_argmax"
+        validation[name] = brief
+    training["last_validation"] = validation
+    return {**result, "training": training,
+            "console_note": "Full teacher-forced examples are in reports/training_result.json; use evaluation metrics for generated-answer quality."}
+
+
 def main() -> None:
     load_project_env()
     logging.basicConfig(level=logging.INFO)
-    result = execute(build_parser().parse_args())
-    print(json.dumps(result, indent=2))
+    args = build_parser().parse_args()
+    result = execute(args)
+    print(json.dumps(console_report(result, full=args.full_report), indent=2))
 
 
 if __name__ == "__main__":

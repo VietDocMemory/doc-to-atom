@@ -209,6 +209,41 @@ def test_sparse_expectation_excludes_padding_and_protection_includes_lora_scale(
     assert protection_loss(composed, 2.0) == pytest.approx(4 * protection_loss(composed, 1.0))
 
 
+def test_aligned_question_path_uses_shared_prompts_and_token_mean_distillation(monkeypatch):
+    from doc_to_atom.inference.answer_format import build_qa_prompt
+
+    config = load_config(Path(__file__).parents[1] / "configs/resource_constrained.yaml")
+    config["training"]["objective_protocol"] = "aligned_qa_v2"
+    system, tokenizer, record = _tiny_system(), ToyTokenizer(), _record("train")
+    original = record.model_dump_json()
+    bank = loop_module._memory(system, tokenizer, record, config)
+    causal_calls = []
+    distill_calls = []
+    original_causal = loop_module._causal_example
+    original_distill = loop_module.distillation_loss
+
+    def causal(tokenizer, prompt, answer, *args):
+        causal_calls.append((prompt, answer))
+        return original_causal(tokenizer, prompt, answer, *args)
+
+    def distill(student, teacher, mask, temperature):
+        distill_calls.append((student.shape, mask.shape))
+        return original_distill(student, teacher, mask, temperature)
+
+    monkeypatch.setattr(loop_module, "_causal_example", causal)
+    monkeypatch.setattr(loop_module, "distillation_loss", distill)
+    bundle, _, trace = loop_module._one_question(
+        system, tokenizer, record, record.qa_pairs[0], bank, config, 6000
+    )
+    assert causal_calls == [(build_qa_prompt("What?", context="Alpha"), "Alpha\n"),
+                            (build_qa_prompt("What?"), "Alpha\n")]
+    assert len(distill_calls) == 1
+    assert trace["objective_protocol"] == "aligned_qa_v2"
+    assert record.model_dump_json() == original
+    bundle.total.backward()
+    assert all(torch.isfinite(p.grad).all() for p in system.parameters() if p.grad is not None)
+
+
 def test_training_explicitly_ignores_atom_only_record(tmp_path):
     atom_only = _record("train", "-atom-only")
     atom_only.qa_pairs = []

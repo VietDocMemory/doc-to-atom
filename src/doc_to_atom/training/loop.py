@@ -18,6 +18,7 @@ from doc_to_atom.config import config_fingerprint, config_fingerprint_candidates
 from doc_to_atom.losses.objectives import (
     composition_consistency_loss,
     confidence_alignment_loss,
+    distillation_loss,
     conflict_listwise_loss,
     irrelevant_suppression_loss,
     listwise_rerank_loss,
@@ -45,6 +46,9 @@ from doc_to_atom.training.distributed import (
 )
 from doc_to_atom.training.state import TrainerState
 from doc_to_atom.training.trainer import EarlyStopping, MultiObjectiveTrainer
+from doc_to_atom.training.protocol import (
+    ALIGNED_PROTOCOL, objective_protocol, reduce_question_losses, training_texts,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -116,6 +120,7 @@ def _aggregate_traces(traces: list[dict]) -> dict:
     )
     return {
         "count": len(traces),
+        "prediction_mode": "teacher_forced_token_argmax",
         "losses": {
             name: _mean([trace["losses"][name] for trace in traces]) for name in loss_names
         },
@@ -169,16 +174,17 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     if not answer:
         raise ValueError(f"{record.record_id}/{qa.question_id}: missing answer")
 
-    # PAPER_UNSPECIFIED prompt literals; intentionally plain and documented.
-    teacher_prompt = f"Document:\n{record.context}\n\nQuestion: {qa.question}\nAnswer:"
-    student_prompt = f"Question: {qa.question}\nAnswer:"
+    protocol = objective_protocol(config)
+    teacher_prompt, student_prompt, lm_target = training_texts(
+        qa.question, record.context, answer, config
+    )
     teacher_inputs, _teacher_labels, teacher_count = _causal_example(
-        tokenizer, teacher_prompt, answer, config["data"]["max_context_tokens"], device
+        tokenizer, teacher_prompt, lm_target, config["data"]["max_context_tokens"], device
     )
     student_inputs, labels, answer_count = _causal_example(
         tokenizer,
         student_prompt,
-        answer,
+        lm_target,
         config["data"]["max_answer_tokens"] + 256,
         device,
     )
@@ -198,14 +204,25 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     teacher_answer = _answer_logits(teacher_logits, min(teacher_count, answer_count))
     common = min(student_answer.shape[1], teacher_answer.shape[1])
     student_answer, teacher_answer = student_answer[:, -common:], teacher_answer[:, -common:]
+    if protocol == ALIGNED_PROTOCOL:
+        student_answer, teacher_answer = student_answer.float(), teacher_answer.float()
 
     answer_ids = labels[labels != -100][-common:]
     lm = F.cross_entropy(student_answer.reshape(-1, student_answer.size(-1)), answer_ids)
-    distill = F.kl_div(
-        F.log_softmax(student_answer / config["training"]["distillation_temperature"], -1),
-        F.softmax(teacher_answer / config["training"]["distillation_temperature"], -1),
-        reduction="batchmean",
-    )
+    if protocol == ALIGNED_PROTOCOL:
+        # Match the public objective helper: average over supervised answer tokens,
+        # not the batch dimension of a [1, answer_length, vocab] tensor.
+        distill = distillation_loss(
+            student_answer, teacher_answer,
+            torch.ones(student_answer.shape[:-1], dtype=torch.bool, device=device),
+            config["training"]["distillation_temperature"],
+        )
+    else:
+        distill = F.kl_div(
+            F.log_softmax(student_answer / config["training"]["distillation_temperature"], -1),
+            F.softmax(teacher_answer / config["training"]["distillation_temperature"], -1),
+            reduction="batchmean",
+        )
 
     all_ids = [atom.atom_id for atom in record.atoms]
     gold = set(qa.gold_atom_ids)
@@ -216,7 +233,16 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     distractor_mask = torch.tensor(
         [atom_id in qa.distractor_atom_ids for atom_id in all_ids], device=device
     )
-    route = routing_loss(student.router.all_stage1_scores, gold_mask, distractor_mask)
+    if protocol == ALIGNED_PROTOCOL:
+        route_weights = config["training"].get("route_weights", {})
+        route = routing_loss(
+            student.router.all_stage1_scores, gold_mask, distractor_mask,
+            negative_weight=route_weights.get("negative", 0.5),
+            gold_weight=route_weights.get("gold", 1.0),
+            distractor_weight=route_weights.get("distractor", 1.5),
+        )
+    else:
+        route = routing_loss(student.router.all_stage1_scores, gold_mask, distractor_mask)
     # A supervised null candidate permits a zero-memory decision. Reuse the
     # route coefficient rather than inventing an unreported auxiliary weight.
     correct_decision = (
@@ -242,9 +268,15 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
             selected_indices=forced_indices,
             routing_weights=forced_weights,
         )
-        composition = composition_consistency_loss(
-            student_answer, _answer_logits(forced_logits, answer_count)[:, -common:]
-        )
+        forced_answer = _answer_logits(forced_logits, answer_count)[:, -common:]
+        if protocol == ALIGNED_PROTOCOL:
+            forced_answer = forced_answer.float()
+            composition = composition_consistency_loss(
+                student_answer.reshape(-1, student_answer.shape[-1]),
+                forced_answer.reshape(-1, forced_answer.shape[-1]),
+            )
+        else:
+            composition = composition_consistency_loss(student_answer, forced_answer)
     else:
         composition = student_answer.sum() * 0
 
@@ -295,6 +327,7 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
     predicted_ids = student_answer.detach().argmax(dim=-1)[0]
     trace = {
         "question_id": qa.question_id,
+        "objective_protocol": protocol,
         "group": "generated_irrelevant" if qa.is_generated_irrelevant else "answerable",
         "total_loss": float(bundle.total.detach()),
         "losses": {name: float(value.detach()) for name, value in losses.items()},
@@ -382,6 +415,7 @@ def run_training(
     if not train_records:
         raise ValueError("no training records after split filtering")
     training_config = config["training"]
+    objective_protocol(config)  # Fail before optimizer allocation for unknown protocols.
     accumulation = int(training_config.get("gradient_accumulation_steps", 1))
     if accumulation < 1:
         raise ValueError("gradient_accumulation_steps must be at least 1")
@@ -597,6 +631,7 @@ def run_training(
             with runtime.accumulate(system, force_sync=force_sync):
                 bank = _memory(system, tokenizer, record, config)
                 record_totals = []
+                record_groups = []
                 record_traces = []
                 for qa in record.qa_pairs[: config["data"]["max_questions_per_sample"]]:
                     if not qa.is_irrelevant and not qa.answers:
@@ -606,11 +641,15 @@ def run_training(
                         system, tokenizer, record, qa, bank, config, curriculum_step
                     )
                     record_totals.append(bundle.total)
+                    record_groups.append(qa.is_irrelevant)
                     record_traces.append(trace)
                     last_trace = trace
                 if not record_totals:
                     continue
-                record_loss = torch.stack(record_totals).mean()
+                record_loss = reduce_question_losses(
+                    record_totals, record_groups,
+                    training_config.get("question_loss_reduction", "question_mean"),
+                )
                 if runtime.is_distributed:
                     group_size = runtime.world_size * accumulation
                     group_index = cursor // accumulation

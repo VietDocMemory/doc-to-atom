@@ -1,0 +1,29 @@
+_base_: ../reconstruction/molab_blackwell_1gpu.yaml
+profile:
+  name: molab-aligned-qa-v2
+  family: experiments
+training:
+  objective_protocol: aligned_qa_v2
+  question_loss_reduction: group_balanced
+  early_stopping_metric: answerable.losses.lm
+  early_stopping_patience: 100
+  stage4_only_best: true
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  effective_global_batch: 16
+  curriculum_boundaries: [200, 400, 600]
+  initial_curriculum_step: 0
+  max_steps: 800
+  max_epochs: 10000
+  warmup_steps: 40
+  validation_every_steps: 200
+  checkpoint_every_steps: 200
+data:
+  max_context_tokens: 1024
+  max_answer_tokens: 64
+  max_atom_tokens: 96
+  max_questions_per_sample: 3
+runtime:
+  distributed_backend: none
+  reranker_device: cpu
+  gradient_checkpointing: false
