@@ -89,6 +89,7 @@ def _(mo):
     dataset_choice = mo.ui.dropdown(
         options={"Existing SQuAD (squad_molab)": "squad_molab",
                  "Medium SQuAD": "medium_squad",
+                 "Repaired medium SQuAD (20261104)": "squad_medium_repaired_20261104",
                  "In-domain train/validation": "in_domain_train_val"},
         value="Existing SQuAD (squad_molab)", label="Dataset")
     mode_choice = mo.ui.dropdown(
@@ -101,7 +102,8 @@ def _(mo):
         value="Offline", label="Weights & Biases")
     run_tag = mo.ui.text(value="exp01", label="Run ID (letters, numbers, _ or -)")
     annotation_budget = mo.ui.dropdown(
-        options={"8192 (current budget)": 8192, "16384": 16384, "32768": 32768},
+        options={"8192 (current budget)": 8192, "16384": 16384, "32768": 32768,
+                 "524288 (provider maximum)": 524288},
         value="8192 (current budget)", label="Annotation tokens (thinking + XML)")
     annotation_reasoning = mo.ui.dropdown(
         options=["low", "medium", "high", "xhigh", "max"],
@@ -121,10 +123,11 @@ def _(mo):
         setup_button,
         mo.hstack([dataset_choice, mode_choice, tracking_choice, run_tag]),
         mo.hstack([annotation_budget, annotation_reasoning]),
-        mo.md("**Annotation:** defaults remain 8192 tokens / max thinking. "
-              "If MiniMax returns `length`, inspect the raw-response sidecar, then "
-              "consider 16384 tokens / medium thinking before clicking 2a again. "
-              "A larger budget may cost more; retries are never automatic. "
+        mo.md("**Annotation:** defaults are 8192 tokens / low thinking. "
+               "If MiniMax returns `length`, inspect the raw-response sidecar, then "
+               "choose a larger completion budget if needed. "
+               "Invalid cached annotations require an explicit audited repair, not repeated 2a clicks. "
+               "A larger budget may cost more; retries are never automatic. "
               "Changed settings affect only new API calls, not cached records."),
         mo.hstack([prepare_button, validate_button]),
         mo.hstack([config_button, preflight_button]),
@@ -187,6 +190,10 @@ def _(REPO_DIR, dataset_choice, mo, mode_choice, run_tag, tracking_choice):
     prefix = dataset_choice.value
     raw_path = REPO_DIR / "data" / f"{prefix}_raw.jsonl"
     atoms_path = REPO_DIR / "data" / f"{prefix}_atoms.jsonl"
+    if prefix == "squad_medium_repaired_20261104":
+        repaired_dir = REPO_DIR / "outputs" / "squad-medium-repaired-20261104"
+        raw_path = repaired_dir / "raw_source.jsonl"
+        atoms_path = repaired_dir / "atoms.jsonl"
     # Separate output roots protect old runs and prevent config/dataset collisions.
     output_dir = (REPO_DIR / "outputs" / "molab-unified" / prefix /
                   mode_choice.value / run_tag.value)
@@ -234,7 +241,7 @@ def _(annotation_budget, annotation_reasoning, atoms_path, raw_path):
                 "--input", str(raw_path), "--output", str(atoms_path),
                 "--max-completion-tokens", str(annotation_budget.value),
                 "--reasoning-effort", annotation_reasoning.value,
-                "--resume", "--retry-invalid"]
+                "--resume"]
 
     return (atomization_command,)
 
@@ -265,8 +272,12 @@ def _(
             try:
                 complete = validate_pair()
             except subprocess.CalledProcessError:
-                print("Cached atomization incomplete or invalid; retrying once with --resume --retry-invalid. "
-                      "Generation may still contain invalid spans; inspect reported record/atom IDs if it fails.")
+                raise RuntimeError(
+                    "Cached annotations failed source-aware validation. No automatic paid retry was made. "
+                    "Inspect invalid_span_details and semantic issues; repair into a separate output with "
+                    "scripts/repair_annotations.py, then select the repaired raw/atoms pair. "
+                    "Use the CLI --resume explicitly if the cache is merely incomplete."
+                ) from None
         if not complete:
             run_cmd(["uv", "run", "python", "-c",
                      "from doc_to_atom.atomization.client import MiniMaxConfig; MiniMaxConfig.from_env()"])

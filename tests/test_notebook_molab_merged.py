@@ -124,6 +124,32 @@ def test_annotation_command_uses_explicit_controls_without_running_api(budget, r
     assert command() == [
         "uv", "run", "doc2atom-atomize", "--input", str(raw), "--output", str(atoms),
         "--max-completion-tokens", str(budget), "--reasoning-effort", reasoning,
-        "--resume", "--retry-invalid",
+        "--resume",
     ]
     assert not list(tmp_path.iterdir())
+
+
+def test_failed_cache_never_triggers_a_paid_retry(tmp_path):
+    tree = ast.parse(NOTEBOOK.read_text(encoding="utf-8"))
+    cell = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                and "atomization_command" in {arg.arg for arg in node.args.args}
+                and "prepare_button" in {arg.arg for arg in node.args.args})
+    cell.decorator_list = []
+    namespace = {}
+    exec(compile(ast.Module(body=[cell], type_ignores=[]), str(NOTEBOOK), "exec"), namespace)
+    raw, atoms = tmp_path / "raw.jsonl", tmp_path / "atoms.jsonl"
+    raw.touch()
+    atoms.touch()
+    calls = []
+
+    def invalid_pair():
+        raise subprocess.CalledProcessError(1, ["validate"])
+
+    with pytest.raises(RuntimeError, match="No automatic paid retry"):
+        namespace["_"](
+            atomization_command=lambda: ["paid-command"], atoms_path=atoms,
+            ensure_repo_ready=lambda: None, prepare_button=SimpleNamespace(value=True),
+            raw_path=raw, run_cmd=lambda cmd: calls.append(cmd),
+            validate_button=SimpleNamespace(value=False), validate_pair=invalid_pair,
+        )
+    assert calls == []

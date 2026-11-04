@@ -1,0 +1,24 @@
+{
+  "description": "Source-reviewed annotation repairs; source questions, answers and contexts are immutable.",
+  "span_typo_replacements": [
+    ["on his list of the Five Best Singer/Dancers", "on her list of the Five Best Singer/Dancers"],
+    ["After procuring necessary gifts for the mission", "After procurring necessary gifts for the mission"],
+    ["warszawicy (plural)", "warszawiacy (plural)"]
+  ],
+  "atoms": [
+    {"record_id": "squad_train_166", "atom_id": "atom_3", "span_prefix": "that ", "reason": "Retain the source's restrictive clause introducer in the evidence span."},
+    {"record_id": "squad_train_196", "atom_id": "atom_4", "source_span": "In empirical therapy, a patient has proven or suspected infection, but the responsible microorganism is not yet unidentified.", "content": "This empirical therapy may be used for proven or suspected infection before the responsible microorganism is identified.", "reason": "Use the actual definition sentence for the source's empirical-therapy question; preserve its original spelling in source_span."},
+    {"record_id": "squad_train_316", "atom_id": "atom_8", "content_prefix": "Wang and Nyima argue that ", "reason": "Resolve the authors of the claim from the paragraph's explicit attribution, rather than treating their historical claim as an unattributed fact."},
+    {"record_id": "squad_train_317", "atom_id": "atom_2", "source_span": "Journalist and author Thomas Laird, in his book The Story of Tibet: Conversations with the Dalai Lama", "reason": "Include the author and book attribution in one contiguous source excerpt."},
+    {"record_id": "squad_train_365", "atom_id": "atom_1", "content": "According to Kolmaš, the Mongols increased their presence in Tibet, culminating in its conquest by a Mongol leader in 1642.", "reason": "Make the already-grounded actor explicit using the paragraph's Mongol coreference; do not add unrelated gold atoms merely to match answer tokens."},
+    {"record_id": "squad_train_438", "atom_id": "atom_1", "content": "Wolf form is assumed by Link when he enters the Twilight Realm.", "reason": "Equivalent normalized assertion with the answer's case preserved; source span stays verbatim."},
+    {"record_id": "squad_train_383", "atom_id": "atom_1", "content": "Bass sound could be distorted far too easily by some equalizer settings on all iPods released in 2006 and earlier, even on undemanding songs.", "reason": "Equivalent normalized assertion with the source answer's case preserved; source span stays verbatim."},
+    {"record_id": "squad_validation_17", "atom_id": "atom_4", "source_span": "Carolina suffered a major setback when Thomas Davis, an 11-year veteran who had already overcome three ACL tears in his career, went down with a broken arm in the NFC Championship Game.", "reason": "Resolve the injured player's name and retain the comma-bearing answer variant in the same evidence sentence."},
+    {"record_id": "squad_validation_22", "atom_id": "atom_1", "source_span": "As the designated home team in the annual rotation between AFC and NFC teams, the Broncos", "reason": "Include the explicit subject of the designated-home-team clause."},
+    {"record_id": "squad_validation_36", "atom_id": "atom_1", "span_suffix": ",", "reason": "Retain source punctuation required by an unchanged answer variant."},
+    {"record_id": "squad_validation_24", "atom_id": "atom_1", "source_span": "On June 4, 2014, the NFL announced that the practice of branding Super Bowl games with Roman numerals, a practice established at Super Bowl V, would be temporarily suspended", "content": "On June 4, 2014, the NFL announced the temporary suspension of Roman-numeral Super Bowl branding.", "reason": "The source's announcement date was omitted from the atom bank."}
+  ],
+  "new_atoms": [
+    {"record_id": "squad_train_336", "atom_id": "repair_jianwen_reign", "semantic_type": "entity_attribute", "content": "The Jianwen Emperor reigned from 1398–1402.", "source_span": "Jianwen Emperor (r. 1398–1402)", "retrieval_text": "Jianwen Emperor reign start end 1398–1402", "reason": "Recover an explicit reign date omitted from the generated atom bank."}
+  ]
+}
