@@ -158,7 +158,7 @@ API có thể chạy khi ngắt Internet.
 | Thêm tests | `tests/test_minimax_client.py` | Request/schema/auth/finish/error tests, legacy cache + provenance, backup, không gọi mạng |
 | Thêm template | `.env.example` | Credential placeholders, không chứa key thật |
 | Sửa tài liệu hiện hành | `README.md`, `PAPER_SPEC.md`, `REPRODUCTION_NOTES.md`, `docs/IMPLEMENTATION_MAP.md`, `docs/LOCAL_MOLAB_RUNBOOK.md`, `docs/MEDIUM_LOCAL_RUNBOOK.md` | Commands hiện hành và sửa các khẳng định sai về null gate/supporting positives/completeness |
-| Đánh dấu historical | `docs/PHASE_LOG.md`, `docs/ATOMIZATION_V2_ACCEPTANCE.md`, `docs/superpowers/plans/2026-10-17-atomization-datasets.md`, `2026-10-17-end-to-end-evaluation.md`, `2026-10-19-atomization-data-contract-v2.md`, `docs/superpowers/specs/2026-10-17-full-pipeline-readiness-design.md` | Không hướng dẫn chạy backend đã bỏ, nhưng giữ bằng chứng/phương án nghiên cứu lịch sử |
+| Dọn báo cáo lịch sử | `docs/PHASE_LOG.md`, `docs/ATOMIZATION_V2_ACCEPTANCE.md`, `docs/superpowers/` | Đã xóa khỏi checkout ngày 2026-11-05 để giảm nhiễu; bằng chứng gốc vẫn truy được trong git history |
 | Thêm báo cáo | `docs/MINIMAX_MIGRATION_PAPER_AUDIT.md` | Báo cáo này |
 
 Các chuỗi tên provider cũ còn lại chỉ thuộc **provenance lịch sử, compatibility tests,

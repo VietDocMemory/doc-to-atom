@@ -1,4 +1,0 @@
-# Same assumed coefficients/rho as resource_constrained; only the diagnostic length changes.
-_base_: small_overfit.yaml
-training:
-  max_steps: 20

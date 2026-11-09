@@ -26,4 +26,4 @@ uv run doc2atom-train --config configs/reconstruction/molab_single_gpu.yaml --da
 uv run doc2atom-evaluate --config outputs/molab-single-gpu/config/resolved.yaml --data data/squad_molab_atoms.jsonl --source data/squad_molab_raw.jsonl --checkpoint outputs/molab-single-gpu/checkpoints/best.json --output outputs/molab-single-gpu/predictions/validation.jsonl --split validation --wandb-mode online
 ```
 
-The evaluation command refuses to overwrite an existing predictions file. Use a new filename to repeat generation. The CLI writes metrics under `metrics/` and a report under `reports/`. `--wandb-mode` defaults to `disabled` for evaluation. See [local results](docs/evaluation-local-results.md) for the current benchmark and limitations.
+The evaluation command refuses to overwrite an existing predictions file. Use a new filename to repeat generation. The CLI writes metrics under `metrics/` and a report under `reports/`. `--wandb-mode` defaults to `disabled` for evaluation. Fill [the evaluation summary template](docs/EVALUATION_SUMMARY_TEMPLATE.md) with measured results and limitations.

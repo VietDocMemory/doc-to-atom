@@ -43,6 +43,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["."]
 markers = [
   "integration: bounded multi-component integration tests",
   "distributed: multi-process CPU/Gloo regression tests",

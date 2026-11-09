@@ -4,7 +4,7 @@
 
 ```bash
 uv sync --extra train --extra test
-accelerate launch --config_file configs/accelerate_paper.yaml \
+accelerate launch --config_file configs/accelerate/molab_zero2.yaml \
   scripts/train.py --config configs/gemma_paper.yaml --data DATA.jsonl
 ```
 
