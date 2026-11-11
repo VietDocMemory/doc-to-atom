@@ -58,11 +58,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=["minimax"],
-        default="minimax",
-        help="Only MiniMax is supported (flag retained for existing MiniMax commands)",
+        choices=["local_qwen", "minimax"],
+        default="local_qwen",
+        help="Local CUDA inference by default; MiniMax requires explicit opt-in",
     )
-    parser.add_argument("--model", default=DEFAULT_MINIMAX_MODEL)
+    parser.add_argument("--model", default=None, help="Model ID/path (provider-specific default)")
     parser.add_argument("--max-completion-tokens", type=int, default=8192)
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high", "xhigh", "max"], default=DEFAULT_REASONING_EFFORT)
     args = parser.parse_args()
@@ -78,12 +78,14 @@ def atomize_file(
     input_path: str | Path, output_path: str | Path, *, provider: str = "minimax",
     resume: bool = True, retry_invalid: bool = False,
     raw_responses: str | Path | None = None,
-    model: str = DEFAULT_MINIMAX_MODEL, max_completion_tokens: int = 8192,
+    model: str | None = None, max_completion_tokens: int = 8192,
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
 ) -> dict:
     """Atomize source JSONL in-process; resume appends only uncached record IDs."""
-    if provider != "minimax":
+    if provider not in {"minimax", "local_qwen"}:
         raise ValueError(f"unsupported annotation provider: {provider}")
+    if max_completion_tokens < 1:
+        raise ValueError("completion budget must be positive")
     atomizer = None  # Cache-only resume does not require credentials or a network request.
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -145,10 +147,21 @@ def atomize_file(
             if record_id in cached_ids:
                 continue
             if atomizer is None:
-                config = replace(MiniMaxConfig.from_env(), model=model,
-                                 max_completion_tokens=max_completion_tokens,
-                                 reasoning_effort=reasoning_effort)
-                atomizer = MiniMaxAtomizer(config)
+                if provider == "local_qwen":
+                    from .local import DEFAULT_LOCAL_QWEN_MODEL, LocalQwenAtomizer, LocalQwenConfig
+
+                    config = LocalQwenConfig(
+                        model=model or DEFAULT_LOCAL_QWEN_MODEL,
+                        max_completion_tokens=max_completion_tokens,
+                    )
+                    atomizer = LocalQwenAtomizer(config)
+                    # Fail before processing records if dependencies/GPU are missing.
+                    atomizer._load_model()
+                else:
+                    config = replace(MiniMaxConfig.from_env(), model=model or DEFAULT_MINIMAX_MODEL,
+                                     max_completion_tokens=max_completion_tokens,
+                                     reasoning_effort=reasoning_effort)
+                    atomizer = MiniMaxAtomizer(config)
                 atomizer.response_sink = lambda response: write_raw_response_jsonl(response, raw_path)
             questions = [
                 QuestionAnnotation(
