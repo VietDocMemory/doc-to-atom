@@ -77,11 +77,16 @@ class DynamicLoRAInjector:
             if memory is None:
                 return output
             x = inputs[0]
-            a = memory.factors_a[key].to(device=x.device, dtype=x.dtype)
-            b = memory.factors_b[key].to(device=x.device, dtype=x.dtype)
-            gate = memory.gates[key].to(device=x.device, dtype=x.dtype)
-            delta = F.linear(F.linear(x, a), b)
-            return output + delta * gate * self.scale
+            # Like Doc-to-LoRA, compute in adapter precision, then return in
+            # base-output precision. Casting FP32 factors to BF16 first can
+            # erase small deltas and their gradients through cancellation.
+            a = memory.factors_a[key].to(device=x.device)
+            b = memory.factors_b[key].to(device=x.device, dtype=a.dtype)
+            gate = memory.gates[key].to(device=x.device, dtype=a.dtype)
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                delta = F.linear(F.linear(x.to(a.dtype), a), b)
+                adapted = output.to(delta.dtype) + delta * gate * self.scale
+            return adapted.to(output.dtype)
 
         return add_delta
 

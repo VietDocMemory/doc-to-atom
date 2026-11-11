@@ -49,7 +49,14 @@ class SharedAtomQueryEncoder(nn.Module):
         )
         for parameter in self.base_model.parameters():
             parameter.requires_grad_(False)
+        self.base_model.eval()
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.base_model.eval()
+        return self
+
+    @torch.no_grad()
     def _early_hidden(self, **model_inputs: torch.Tensor) -> torch.Tensor:
         layers = decoder_layers(self.base_model)
         if self.num_layers < 1 or self.num_layers > len(layers):
@@ -85,9 +92,11 @@ class SharedAtomQueryEncoder(nn.Module):
             attention_mask=attention_mask,
             **extra_inputs,
         )
-        mask = attention_mask.to(hidden.dtype).unsqueeze(-1)
-        pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
-        return self.projection(pooled.float())
+        mask = attention_mask.to(torch.bool).unsqueeze(-1)
+        # Mask before reduction (NaN * 0 is still NaN), as in D2L mean pooling.
+        # Accumulate in FP32 so BF16 sums do not discard small contributions.
+        pooled = hidden.float().masked_fill(~mask, 0).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
+        return self.projection(pooled)
 
     encode_atoms = forward
     encode_queries = forward

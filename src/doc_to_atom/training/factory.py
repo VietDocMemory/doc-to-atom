@@ -57,7 +57,9 @@ def build_system(config: dict, enable_reranker: bool = True):
         else requested_device
     )
     dtype = torch.bfloat16
-    kwargs = {"dtype": dtype}
+    # torch_dtype also supports the declared Transformers 4.51 lower bound,
+    # which Doc-to-LoRA pins; keep the loader compatible with that API.
+    kwargs = {"torch_dtype": dtype}
     if model_cfg.get("flash_attention_2") is True:
         kwargs["attn_implementation"] = "flash_attention_2"
     try:

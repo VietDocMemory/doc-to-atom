@@ -42,6 +42,12 @@ class TeacherStudentSystem(nn.Module):
         self.injector = injector
         freeze_base_model(self.base_model)
 
+    def train(self, mode: bool = True):
+        """Train memory modules without re-enabling dropout in the frozen base."""
+        super().train(mode)
+        self.base_model.eval()
+        return self
+
     def forward(self, operation: str, **kwargs):
         """Dispatch all differentiable paths through the distributed wrapper.
 
