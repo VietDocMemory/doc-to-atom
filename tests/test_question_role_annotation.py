@@ -24,6 +24,7 @@ def test_role_dto_exposes_only_annotation_owned_fields():
     assert set(models.QuestionRoleAnnotation.model_fields) == {
         "question_id",
         "question_type",
+        "is_irrelevant",
         "gold_atom_ids",
         "supporting_atom_ids",
         "distractor_atom_ids",

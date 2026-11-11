@@ -133,8 +133,29 @@ def canonicalize_record(
             )
             atom.relations = valid_relations
 
+    invalid_ids = {atom.atom_id for atom in record.atoms if not atom.span_valid}
     for qa in record.qa_pairs:
         qa_id = qa.question_id
+        for role in ("gold_atom_ids", "supporting_atom_ids", "distractor_atom_ids"):
+            values = getattr(qa, role)
+            removed = [item for item in values if item in invalid_ids]
+            if removed:
+                _record_transformation(
+                    record,
+                    code="DROP_INVALID_SPAN_ATOM_REFERENCE",
+                    message=f"{qa_id}: removed {role} references to invalid source spans {removed}",
+                    question_id=qa_id,
+                    details={"role": role, "removed_atom_ids": removed},
+                )
+                setattr(qa, role, [item for item in values if item not in invalid_ids])
+        if qa.is_generated_irrelevant and not qa.is_irrelevant:
+            _record_transformation(
+                record,
+                code="FORCE_GENERATED_PROBE_IRRELEVANT",
+                message=f"{qa_id}: generated probe forced irrelevant (Appendix B.2)",
+                question_id=qa_id,
+            )
+            qa.is_irrelevant = True
         gold = _normalise_role(
             record, qa.gold_atom_ids, known_ids=ids, question_id=qa_id, role="gold"
         )

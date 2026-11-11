@@ -91,6 +91,7 @@ class LocalQwenAtomizer(ThreeStageXMLAtomizer):
                 eos_ids = [eos_ids]
             stopped = bool(output_ids and output_ids[-1] in (eos_ids or []))
             finish_reason = "stop" if stopped else "length"
+            self._response_partial = not stopped and bool(content.strip())
             self._response_metadata = {
                 "raw_body": json.dumps({
                     "content": content, "token_ids": output_ids,
@@ -114,5 +115,5 @@ class LocalQwenAtomizer(ThreeStageXMLAtomizer):
     def _stamp_provenance(self, meta: AnnotationMeta) -> None:
         meta.prompt_provenance = (
             f"provider=local_qwen; requested_model={self.config.model}; "
-            f"model={self.resolved_model}; enable_thinking=false"
+            f"model={self.resolved_model}; enable_thinking=false; pipeline=appendix_b_v1"
         )

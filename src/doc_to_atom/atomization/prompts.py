@@ -51,11 +51,11 @@ Do not generate a question whose answer is stated or entailed by the document.
 QUESTION_SYSTEM = """Annotate each question against the supplied validated atom bank. Return one
 <question_annotations> XML root and no markdown. For each
 <question_annotation>, emit only question_id, question_type, gold_atom_ids,
-supporting_atom_ids, and distractor_atom_ids. Gold is the minimal necessary set; distractors
+supporting_atom_ids, distractor_atom_ids, and is_irrelevant. Gold is the minimal necessary set; distractors
 are plausible false activations. Unknown IDs are forbidden. Irrelevant questions must have no
 gold or supporting atoms. Input question text and source answers are read-only evidence: never
 copy, rewrite, normalize, paraphrase, or emit them. Never emit answer, answers, question,
-refusal_target, relevant_atom_ids, is_irrelevant, has_conflict, or is_generated_irrelevant.
+refusal_target, relevant_atom_ids, has_conflict, or is_generated_irrelevant.
 Represent each ID list as repeated <atom_id>...</atom_id> children. Copy question_id from
 the input question id attribute exactly.
 question_type must be exactly one of single_hop, multi_hop, comparison, temporal, causal,
@@ -73,6 +73,10 @@ Assign roles independently for EACH question. The three ID lists must be pairwis
 Do not invent extra gold or supporting atoms to fill a list. Do not label a source-answerable
 question irrelevant merely to avoid choosing gold. For unanswerable questions use
 question_type=irrelevant and empty gold/supporting lists.
+Set is_irrelevant=true for unanswerable questions, otherwise false. Every input marked
+generated_irrelevant=true MUST remain irrelevant, with no gold or supporting atoms;
+do not rescue or relabel generated probes as answerable. Nonempty source answers must
+remain answerable: report their evidence instead of inventing a refusal.
 
 Example: atom_1 states Paris is France's capital; atom_2 states Paris is on the Seine;
 atom_3 states Lyon is a city in France. For "What is France's capital?", emit:
@@ -87,9 +91,15 @@ is empty; all IDs exist in the input bank; every input question_id occurs exactl
 
 
 DATASET_ADAPTERS = {
-    "2wikimultihopqa": "Surface bridge entities and connect parallel mentions with same_entity.",
-    "drop": "Put every comparable quantity in its own atom with a verbatim source span.",
+    "2wikimultihopqa": ("Surface bridge entities and connect parallel mentions with same_entity. "
+                       "Hard distractors bind the right attribute to the wrong entity."),
+    "drop": ("Put every comparable quantity in its own atom with a verbatim source span. "
+             "Keep operands and units for addition, counting, sorting and comparison."),
     "ropes": "Preserve causal background, situation facts, and cause-effect links.",
     "squad": "Preserve answer spans and entity-attribute boundaries.",
-    "qasper": "Preserve evidence fragments, section provenance, and multi-paragraph support.",
+    "qasper": ("Preserve evidence fragments, section provenance, and multi-paragraph support. "
+               "Field-lookup distractors use the same entity with another field or the same field with another entity."),
 }
+
+# Common dataset spellings refer to the same multi-hop adapter.
+DATASET_ADAPTERS["2wikimultihop"] = DATASET_ADAPTERS["2wikimultihopqa"]

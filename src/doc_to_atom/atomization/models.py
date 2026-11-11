@@ -87,6 +87,7 @@ class QuestionRoleAnnotation(BaseModel):
 
     question_id: str
     question_type: QuestionType | None = None
+    is_irrelevant: bool | None = None
     gold_atom_ids: tuple[str, ...] = Field(default_factory=tuple)
     supporting_atom_ids: tuple[str, ...] = Field(default_factory=tuple)
     distractor_atom_ids: tuple[str, ...] = Field(default_factory=tuple)

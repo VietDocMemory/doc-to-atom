@@ -74,12 +74,13 @@ def parse_atoms_xml(xml: str) -> tuple[list[Atom], list[str]]:
             relation_root = node.find("relations")
             if relation_root is not None:
                 for rel in relation_root.findall("relation"):
-                    relations.append(
-                        Relation(
+                    try:
+                        relations.append(Relation(
                             relation_type=rel.get("type") or _text(rel, "relation_type"),
                             target_atom_id=rel.get("target") or _text(rel, "target_atom_id"),
-                        )
-                    )
+                        ))
+                    except (ValueError, TypeError) as exc:
+                        warnings.append(f"atom[{index}] relation dropped: {exc}")
             atoms.append(
                 Atom(
                     atom_id=node.get("id") or _text(node, "atom_id") or f"atom_{index}",
@@ -94,6 +95,9 @@ def parse_atoms_xml(xml: str) -> tuple[list[Atom], list[str]]:
                     relations=relations,
                 )
             )
+            if any(atom.atom_id == atoms[-1].atom_id for atom in atoms[:-1]):
+                duplicate = atoms.pop()
+                warnings.append(f"atom[{index}] dropped: duplicate atom_id={duplicate.atom_id}")
         except Exception as exc:  # noqa: BLE001 -- malformed generated elements are isolated.
             warnings.append(f"atom[{index}] dropped: {exc}")
     return atoms, warnings
@@ -121,10 +125,14 @@ def parse_question_roles_xml(xml: str) -> tuple[list[QuestionRoleAnnotation], li
             continue
         try:
             question_type = _value(node, "question_type") or None
+            irrelevant = _value(node, "is_irrelevant").lower()
+            if irrelevant and irrelevant not in {"true", "false", "1", "0"}:
+                raise ValueError("is_irrelevant must be true or false")
             annotations.append(
                 QuestionRoleAnnotation(
                     question_id=node.get("id") or _value(node, "question_id"),
                     question_type=question_type,
+                    is_irrelevant=_bool(irrelevant) if irrelevant else None,
                     gold_atom_ids=tuple(_ids(node, "gold_atom_ids")),
                     supporting_atom_ids=tuple(_ids(node, "supporting_atom_ids")),
                     distractor_atom_ids=tuple(_ids(node, "distractor_atom_ids")),

@@ -51,25 +51,24 @@ def join_question_roles(
     joined: list[QuestionAnnotation] = []
     for source in authoritative:
         role = role_by_id[source.question_id]
-        if role.question_type == "irrelevant" and not source.is_irrelevant:
+        marked_irrelevant = role.question_type == "irrelevant" or role.is_irrelevant is True
+        if marked_irrelevant and not source.is_irrelevant and source.answers:
             raise QuestionJoinError(
                 f"provider relevance conflicts with authoritative question_id: {source.question_id}"
             )
-        # Generation is provenance, not a guaranteed relevance label. Only a
-        # generated probe may be rescued by the annotation pass.
-        rescued = source.is_generated_irrelevant and role.question_type not in (None, "irrelevant")
-        if rescued and not role.gold_atom_ids:
-            raise QuestionJoinError(f"rescued probe has no gold atoms: {source.question_id}")
+        # Appendix B.2 fixes generated probes as irrelevant. Source answers are
+        # immutable; an annotator cannot relabel a known source answer as refusal.
+        irrelevant = source.is_irrelevant or source.is_generated_irrelevant or marked_irrelevant
         question_type = (
             "irrelevant"
-            if source.is_irrelevant and not rescued
+            if irrelevant
             else (role.question_type or source.question_type)
         )
         joined.append(
             source.model_copy(
                 update={
                     "question_type": question_type,
-                    "is_irrelevant": source.is_irrelevant and not rescued,
+                    "is_irrelevant": irrelevant,
                     "gold_atom_ids": list(role.gold_atom_ids),
                     "supporting_atom_ids": list(role.supporting_atom_ids),
                     "distractor_atom_ids": list(role.distractor_atom_ids),

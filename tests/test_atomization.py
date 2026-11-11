@@ -127,7 +127,7 @@ def test_irrelevant_clears_gold():
     assert record.qa_pairs[0].question_type == "irrelevant"
 
 
-def test_generated_probe_can_be_rescued_as_in_appendix_f():
+def test_generated_probe_remains_irrelevant_as_in_appendix_b():
     probe = QuestionAnnotation(
         question_id="generated_irrelevant_0", question="What is Ascension Island's code?",
         question_type="irrelevant", is_irrelevant=True, is_generated_irrelevant=True,
@@ -136,10 +136,12 @@ def test_generated_probe_can_be_rescued_as_in_appendix_f():
     role = QuestionRoleAnnotation(
         question_id=probe.question_id, question_type="field_lookup", gold_atom_ids=("a0",)
     )
-    [rescued] = join_question_roles((probe,), (role,))
-    assert rescued.is_generated_irrelevant and not rescued.is_irrelevant
-    assert rescued.question_type == "field_lookup" and rescued.gold_atom_ids == ["a0"]
-    assert rescued.answers == ()  # Do not invent an answer absent from the source.
+    [joined] = join_question_roles((probe,), (role,))
+    record = validate_record(StructuredRecord(record_id="r", context="A", atoms=[], qa_pairs=[joined]))
+    [validated] = record.qa_pairs
+    assert validated.is_generated_irrelevant and validated.is_irrelevant
+    assert validated.question_type == "irrelevant" and validated.gold_atom_ids == []
+    assert validated.answers == ()
 
 
 def test_question_annotation_failure_retains_validated_atom_only_record():

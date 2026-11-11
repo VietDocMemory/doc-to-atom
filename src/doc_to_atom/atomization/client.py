@@ -62,6 +62,14 @@ class MiniMaxAPIError(RuntimeError):
     """A transport/provider failure; never silently spend on subsequent records."""
 
 
+class AnnotationResponseError(MiniMaxAPIError):
+    """Recoverable annotation failure, distinct from fatal infrastructure errors."""
+
+    def __init__(self, message: str, partial_content: str = ""):
+        super().__init__(message)
+        self.partial_content = partial_content
+
+
 class ThreeStageXMLAtomizer:
     def __init__(self, config: MiniMaxConfig):
         self.config = config
@@ -74,6 +82,9 @@ class ThreeStageXMLAtomizer:
         self._stage_attempts: Counter[str] = Counter()
         self._response_metadata: dict = {}
         self._response_error: str | None = None
+        self._response_partial = False
+        self._response_fatal = False
+        self.last_annotation_meta = AnnotationMeta()
 
     def _request(self, system: str, user: str) -> str:
         # Use the official OpenAI SDK, with MiniMax extensions in extra_body.
@@ -131,6 +142,7 @@ class ThreeStageXMLAtomizer:
             payload = response.json()
             base = payload.get("base_resp") or {}
             if base.get("status_code", 0) != 0:
+                self._response_fatal = True
                 self._response_error = f"MiniMax provider error {base['status_code']}; inspect response sidecar"
                 return ""
             self.resolved_model = payload["model"]
@@ -139,6 +151,7 @@ class ThreeStageXMLAtomizer:
             if not isinstance(content, str) or not isinstance(self.resolved_model, str):
                 raise ValueError("invalid text/model")
             if choice.get("finish_reason") != "stop" or not content.strip():
+                self._response_partial = choice.get("finish_reason") == "length" and bool(content.strip())
                 self._response_error = (
                     f"MiniMax incomplete completion ({choice.get('finish_reason')}); "
                     "review max_completion_tokens (includes thinking) and response sidecar"
@@ -157,6 +170,8 @@ class ThreeStageXMLAtomizer:
     def _call(self, stage: str, system: str, user: str) -> str:
         self._response_metadata = {}
         self._response_error = None
+        self._response_partial = False
+        self._response_fatal = False
         content = self._request(system, user)
         self._stage_attempts[stage] += 1
         captured = RawProviderResponse.capture(
@@ -172,10 +187,30 @@ class ThreeStageXMLAtomizer:
         if self.response_sink is not None:
             self.response_sink(captured)
         if self._response_error:
-            raise MiniMaxAPIError(self._response_error)
+            status = self._response_metadata.get("http_status")
+            # Keep the legacy paid provider fail-closed: malformed completions
+            # must not silently lead to more billed downstream requests.
+            if (self.provider == "minimax" or self._response_fatal
+                    or (status is not None and not 200 <= status < 300)):
+                raise MiniMaxAPIError(self._response_error)
+            partial = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+            raise AnnotationResponseError(
+                self._response_error, partial_content=partial if self._response_partial else "",
+            )
         # Older MiniMax models may include inline thinking. Keep raw content
         # intact in provenance and exclude thinking only from the parser input.
         return re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+
+    def _call_for_stage(self, stage: str, system: str, user: str, meta: AnnotationMeta) -> str:
+        try:
+            return self._call(stage, system, user)
+        except AnnotationResponseError as exc:
+            # Reuse only complete XML subtrees. No second inference call or
+            # nondeterministic repair is introduced by this recovery path.
+            if exc.partial_content:
+                meta.warnings.append(f"{stage}: recovering complete XML subtrees from partial output")
+                return exc.partial_content
+            raise ValueError(str(exc)) from exc
 
     @staticmethod
     def _document_xml(context: str) -> str:
@@ -189,8 +224,11 @@ class ThreeStageXMLAtomizer:
     ) -> tuple[str, str]:
         atom_root = ET.Element("atoms")
         for atom in atoms:
+            if not atom.span_valid:
+                continue
             node = ET.SubElement(atom_root, "atom", {"id": atom.atom_id})
             ET.SubElement(node, "content").text = atom.content
+            ET.SubElement(node, "source_span").text = atom.source_span
             ET.SubElement(node, "retrieval_text").text = atom.retrieval_text
 
         question_root = ET.Element("questions")
@@ -222,18 +260,37 @@ class ThreeStageXMLAtomizer:
         split: str | None = None,
     ) -> StructuredRecord | None:
         meta = AnnotationMeta()
+        self.last_annotation_meta = meta
         self.last_errors = []
         self._begin_record(record_id)
+        self._stamp_provenance(meta)
         adapter = DATASET_ADAPTERS.get((dataset or "").lower(), "")
         try:
             document_xml = self._document_xml(context)
-            xml = self._call("decomposition", DECOMPOSITION_SYSTEM, f"{adapter}\n{document_xml}")
+            xml = self._call_for_stage(
+                "decomposition", DECOMPOSITION_SYSTEM, f"{adapter}\n{document_xml}", meta,
+            )
             atoms, warnings = parse_atoms_xml(xml)
             meta.warnings.extend(warnings)
             if not atoms:
+                meta.decomposition_parse_status = "failed"
                 meta.errors.append("context decomposition returned no valid atoms")
                 self.last_errors = list(meta.errors)
                 return None  # Appendix B: discard the whole sample.
+            # Appendix B.1: validate before any question-to-atom annotation.
+            # Retain invalid atoms/flags in the artifact for quality inspection,
+            # but never present them as grounded evidence in the annotation bank.
+            bank = validate_record(StructuredRecord(
+                record_id=record_id, dataset=dataset, split=split, context=context,
+                atoms=atoms, qa_pairs=[], annotation_meta=meta,
+            ))
+            atoms, meta = bank.atoms, bank.annotation_meta
+            self.last_annotation_meta = meta
+            if not any(atom.span_valid for atom in atoms):
+                meta.decomposition_parse_status = "failed"
+                meta.errors.append("context decomposition returned no source-grounded atoms")
+                self.last_errors = list(meta.errors)
+                return None
         except MiniMaxAPIError:
             raise
         except Exception as exc:  # noqa: BLE001 -- Appendix B requires per-record recovery.
@@ -244,13 +301,18 @@ class ThreeStageXMLAtomizer:
 
         generated_probes: list[QuestionAnnotation] = []
         try:
-            xml = self._call(
+            xml = self._call_for_stage(
                 "irrelevant_probe",
                 IRRELEVANT_SYSTEM,
                 f"Generate {self.config.irrelevant_probe_count} probes.\n{document_xml}",
+                meta,
             )
             root = ET.fromstring(xml)
+            if root.tag != "irrelevant_questions":
+                raise ValueError("expected irrelevant_questions XML root")
             for index, node in enumerate(root.iter("question")):
+                if list(node):
+                    raise ValueError("irrelevant probe must be text-only")
                 if node.text:
                     generated_probes.append(
                         QuestionAnnotation(
@@ -266,16 +328,18 @@ class ThreeStageXMLAtomizer:
         except MiniMaxAPIError:
             raise
         except Exception as exc:  # noqa: BLE001 -- optional probes must not drop the record.
+            generated_probes = []
             meta.irrelevant_parse_status = "failed_ignored"
             meta.warnings.append(f"irrelevant probe generation failed: {exc}")
 
         try:
             authoritative = build_authoritative_questions(questions, generated_probes)
             atom_xml, question_xml = self._annotation_input_xml(atoms, authoritative)
-            xml = self._call(
+            xml = self._call_for_stage(
                 "question_annotation",
                 QUESTION_SYSTEM,
                 f"{adapter}\n{atom_xml}\n{question_xml}",
+                meta,
             )
             roles, notices = parse_question_roles_xml(xml)
             for notice in notices:
@@ -287,10 +351,14 @@ class ThreeStageXMLAtomizer:
             if any(notice.severity == "error" for notice in notices):
                 raise QuestionJoinError("provider question annotation failed contract parsing")
             annotated = join_question_roles(authoritative, roles)
+            role_by_id = {role.question_id: role for role in roles}
             for qa in annotated:
-                if qa.is_generated_irrelevant and not qa.is_irrelevant and not qa.answers:
+                role = role_by_id[qa.question_id]
+                if qa.is_generated_irrelevant and (
+                    role.question_type not in (None, "irrelevant") or role.is_irrelevant is False
+                ):
                     meta.warnings.append(
-                        f"{qa.question_id}: rescued probe has no source answer; excluded from LM training"
+                        f"{qa.question_id}: generated probe forced irrelevant (Appendix B.2)"
                     )
         except MiniMaxAPIError:
             raise

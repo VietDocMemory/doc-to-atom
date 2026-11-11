@@ -198,11 +198,12 @@ def audit_record(
     }
     for stage, status in statuses.items():
         if status != "ok":
+            optional_failure = stage == "irrelevant" and status == "failed_ignored"
             issues.append(
                 {
                     "record_id": record.record_id,
-                    "severity": "error",
-                    "code": "parse_error",
+                    "severity": "warning" if optional_failure else "error",
+                    "code": "auxiliary_probe_failure" if optional_failure else "parse_error",
                     "stage": stage,
                     "status": status,
                 }

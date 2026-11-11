@@ -12,7 +12,7 @@ from pathlib import Path
 from doc_to_atom.config import load_project_env
 
 from .client import DEFAULT_MINIMAX_MODEL, DEFAULT_REASONING_EFFORT, MiniMaxAtomizer, MiniMaxConfig
-from .models import QuestionAnnotation, StructuredRecord
+from .models import AnnotationMeta, QuestionAnnotation, StructuredRecord
 from .provenance import write_raw_response_jsonl
 from .validation import source_span_matches
 
@@ -47,6 +47,10 @@ def main() -> None:
         help="Append-only raw provider response JSONL (default: <output>.raw-responses.jsonl)",
     )
     parser.add_argument(
+        "--annotation-meta",
+        help="Append-only per-sample quality log (default: <output>.annotation-meta.jsonl)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Append missing records and reuse existing cached record IDs",
@@ -71,6 +75,7 @@ def main() -> None:
         retry_invalid=args.retry_invalid, raw_responses=args.raw_responses,
         model=args.model, max_completion_tokens=args.max_completion_tokens,
         reasoning_effort=args.reasoning_effort,
+        annotation_meta=args.annotation_meta,
     ), indent=2))
 
 
@@ -80,6 +85,7 @@ def atomize_file(
     raw_responses: str | Path | None = None,
     model: str | None = None, max_completion_tokens: int = 8192,
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
+    annotation_meta: str | Path | None = None,
 ) -> dict:
     """Atomize source JSONL in-process; resume appends only uncached record IDs."""
     if provider not in {"minimax", "local_qwen"}:
@@ -91,8 +97,12 @@ def atomize_file(
     output.parent.mkdir(parents=True, exist_ok=True)
     raw_path = Path(raw_responses or f"{output}.raw-responses.jsonl")
     raw_path.parent.mkdir(parents=True, exist_ok=True)
+    quality_path = Path(annotation_meta or f"{output}.annotation-meta.jsonl")
+    quality_path.parent.mkdir(parents=True, exist_ok=True)
+    if len({output.resolve(), raw_path.resolve(), quality_path.resolve(), Path(input_path).resolve()}) != 4:
+        raise ValueError("input, output, raw responses and annotation metadata must use distinct paths")
     if not resume:
-        if output.exists() or raw_path.exists():
+        if output.exists() or raw_path.exists() or quality_path.exists():
             raise FileExistsError("refusing to overwrite existing atomization output or raw responses")
         raw_path.touch()
     cached_ids: set[str] = set()
@@ -140,8 +150,11 @@ def atomize_file(
     with (
         Path(input_path).open(encoding="utf-8") as source,
         output.open(mode, encoding="utf-8") as sink,
+        quality_path.open("a", encoding="utf-8") as quality_sink,
     ):
         for index, line in enumerate(source):
+            if not line.strip():
+                continue
             raw = json.loads(line)
             record_id = str(raw.get("id", index))
             if record_id in cached_ids:
@@ -181,8 +194,18 @@ def atomize_file(
                 raw.get("dataset"),
                 raw.get("split"),
             )
+            meta = record.annotation_meta if record is not None else getattr(atomizer, "last_annotation_meta", None)
+            if not isinstance(meta, AnnotationMeta):
+                meta = AnnotationMeta(errors=list(atomizer.last_errors))
+            quality_sink.write(json.dumps({
+                "record_id": record_id, "provider": provider,
+                "status": "discarded" if record is None else ("atom_only" if not record.qa_pairs else "annotated"),
+                "annotation_meta": meta.model_dump(),
+            }, ensure_ascii=False) + "\n")
+            quality_sink.flush()
             if record is not None:
                 sink.write(record.model_dump_json() + "\n")
+                sink.flush()
                 invalid_ids = [atom.atom_id for atom in record.atoms
                                if not atom.span_valid
                                or not source_span_matches(atom.source_span, record.context)]
@@ -206,4 +229,4 @@ def atomize_file(
             "inspect them before any explicit retry. No automatic retry was made."
         )
     return {"records_cached": len(cached_ids), "records_failed": failed,
-            "output": str(output), "provider": provider}
+            "output": str(output), "provider": provider, "annotation_meta": str(quality_path)}
