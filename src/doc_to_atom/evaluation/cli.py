@@ -16,7 +16,7 @@ from doc_to_atom.config import (
     load_config,
     load_project_env,
 )
-from doc_to_atom.data.io import read_jsonl, validate_jsonl
+from doc_to_atom.data.io import read_canonical_jsonl as read_jsonl, validate_jsonl
 from doc_to_atom.evaluation.metrics import (
     exact_match,
     first_line,

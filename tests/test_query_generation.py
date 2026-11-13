@@ -25,7 +25,7 @@ class _Tokenizer:
         9: "<eos>",
     }
 
-    def __call__(self, prompt, return_tensors):
+    def __call__(self, prompt, return_tensors, **kwargs):
         assert return_tensors == "pt"
         return _Tokens(input_ids=torch.tensor([[1]]), attention_mask=torch.tensor([[1]]))
 

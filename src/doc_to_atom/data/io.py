@@ -19,6 +19,11 @@ def read_jsonl(path: str | Path) -> list[StructuredRecord]:
     return records
 
 
+def read_canonical_jsonl(path: str | Path) -> list[StructuredRecord]:
+    """Consume the same deterministic representation as validation, without rewriting files."""
+    return [validate_record(record) for record in read_jsonl(path)]
+
+
 def write_jsonl(records: Iterable[StructuredRecord], path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

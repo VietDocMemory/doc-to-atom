@@ -41,13 +41,17 @@ class _StopAfterAnswerLine(StoppingCriteria):
 
 
 @torch.no_grad()
-def generate_short_answer(model, tokenizer, prompt: str, *, max_new_tokens: int) -> dict:
+def generate_short_answer(
+    model, tokenizer, prompt: str, *, max_new_tokens: int,
+    add_special_tokens: bool | None = None,
+) -> dict:
     if max_new_tokens < 1:
         raise ValueError("max_new_tokens must be positive")
     device = getattr(model, "device", None)
     if device is None:
         device = next(model.parameters()).device
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    token_options = {} if add_special_tokens is None else {"add_special_tokens": add_special_tokens}
+    inputs = tokenizer(prompt, return_tensors="pt", **token_options).to(device)
     prompt_length = inputs["input_ids"].shape[1]
     stop = _StopAfterAnswerLine(tokenizer, prompt_length)
     output = model.generate(

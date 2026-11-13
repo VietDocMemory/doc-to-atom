@@ -48,6 +48,7 @@ class DocToLoRABaseline:
     tokenizer: object
     variant: str
     max_new_tokens: int = 128
+    prompt_protocol: str = "raw_v1"
 
     @property
     def name(self) -> str:
@@ -56,11 +57,24 @@ class DocToLoRABaseline:
         return f"d2l_{self.variant}"
 
     def answer(self, document: str, question: str) -> str:
+        if self.prompt_protocol not in {"raw_v1", "chat_v1"}:
+            raise ValueError("D2L prompt_protocol must be raw_v1 or chat_v1")
+        if self.prompt_protocol == "chat_v1":
+            prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": question}],
+                tokenize=False, add_generation_prompt=True,
+            )
+        else:
+            prompt = question
         self.d2l_model.reset()
-        self.d2l_model.internalize(document)
-        return generate_short_answer(
-            self.d2l_model, self.tokenizer, question, max_new_tokens=self.max_new_tokens
-        )["prediction"]
+        try:
+            self.d2l_model.internalize(document)
+            return generate_short_answer(
+                self.d2l_model, self.tokenizer, prompt, max_new_tokens=self.max_new_tokens,
+                add_special_tokens=False if self.prompt_protocol == "chat_v1" else None,
+            )["prediction"]
+        finally:
+            self.d2l_model.reset()
 
 
 @dataclass

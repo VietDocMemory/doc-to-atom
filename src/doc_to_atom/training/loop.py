@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import torch
+from doc_to_atom.encoder.tokenization import tokenize_query
 from torch.nn import functional as F
 from transformers import get_cosine_schedule_with_warmup
 
@@ -188,7 +189,7 @@ def _one_question(system, tokenizer, record, qa, bank, config, step: int):
         config["data"]["max_answer_tokens"] + 256,
         device,
     )
-    query_inputs = _tokenize(tokenizer, [qa.question], 256, device)
+    query_inputs = tokenize_query(tokenizer, qa.question, device)
     teacher_logits = system(
         operation="teacher", full_context_query_inputs=teacher_inputs
     )

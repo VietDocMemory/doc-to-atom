@@ -10,7 +10,7 @@ from typing import Callable
 import yaml
 
 from doc_to_atom.config import ROOT, load_and_resolve_config, load_project_env, validate_config
-from doc_to_atom.data.io import read_jsonl, validate_jsonl
+from doc_to_atom.data.io import read_canonical_jsonl as read_jsonl, validate_jsonl
 from doc_to_atom.runtime import RunContext, RunTracker
 from doc_to_atom.runtime.run import atomic_write_json, atomic_write_yaml
 from doc_to_atom.training.factory import build_system, parameter_counts

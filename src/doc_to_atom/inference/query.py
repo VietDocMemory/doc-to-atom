@@ -5,6 +5,7 @@ import torch
 from doc_to_atom.compiler.memory import MemoryBank
 from doc_to_atom.composer.model import MemoryComposer
 from doc_to_atom.encoder.shared import SharedAtomQueryEncoder
+from doc_to_atom.encoder.tokenization import tokenize_query
 from doc_to_atom.injection.lora import DynamicLoRAInjector
 from doc_to_atom.router.model import TwoStageRouter
 from doc_to_atom.inference.answer_format import build_qa_prompt, generate_short_answer
@@ -31,8 +32,8 @@ class QueryEngine:
     def answer(
         self, query: str, bank: MemoryBank, top_k: int = 8, max_new_tokens: int = 128
     ) -> dict:
-        query_encoded = self.tokenizer(query, return_tensors="pt").to(
-            next(self.model.parameters()).device
+        query_encoded = tokenize_query(
+            self.tokenizer, query, next(self.model.parameters()).device,
         )
         generation_prompt = build_qa_prompt(query)
         query_embedding = self.encoder.encode_queries(**query_encoded)
